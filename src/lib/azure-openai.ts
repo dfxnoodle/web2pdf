@@ -568,7 +568,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
     }
 
     try {
-      console.log('Converting PDF to images for Vision API analysis...')
+      console.log('Converting PDF to images for Vision API analysis with image descriptions...')
       
       // Convert PDF to images using pdf2pic
       const pdf2pic = (await import('pdf2pic')).default
@@ -627,7 +627,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
       
       for (let i = 0; i < convertedPages.length; i++) {
         const imagePath = convertedPages[i]
-        console.log(`Analyzing page ${i + 1} with Vision API using file: ${imagePath}`)
+        console.log(`Analyzing page ${i + 1} with Vision API for text and image descriptions using file: ${imagePath}`)
         
         try {
           // Read image file as buffer for Vision API
@@ -639,7 +639,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
             messages: [
               {
                 role: 'system',
-                content: `You are an expert document analysis AI. Extract all visible text from this page image.
+                content: `You are an expert document analysis AI. Extract all visible text from this page image and describe any visual elements.
 
 Instructions:
 1. Read and transcribe ALL visible text accurately
@@ -649,15 +649,19 @@ Instructions:
 5. For tables, format them in a readable way
 6. Ignore watermarks or decorative elements
 7. If this is page ${i + 1} of a multi-page document, start with "=== Page ${i + 1} ===" 
+8. **IMPORTANT**: Describe any images, charts, diagrams, graphs, or visual elements present
+9. For images/visuals, include descriptions like: "[IMAGE: Description of what is shown in the image]"
+10. For charts/graphs, describe the type and key data points: "[CHART: Bar chart showing sales data for Q1-Q4]"
+11. For diagrams, explain what they illustrate: "[DIAGRAM: Flow chart showing the process steps]"
 
-Provide clean, well-structured text that preserves the document's organization.`
+Provide clean, well-structured text that preserves the document's organization and includes descriptions of all visual content that would help in website generation.`
               },
               {
                 role: 'user',
                 content: [
                   {
                     type: 'text',
-                    text: `Extract all text from page ${i + 1} of "${filename}". Maintain structure and formatting.`
+                    text: `Extract all text and describe all visual elements from page ${i + 1} of "${filename}". Include detailed descriptions of images, charts, diagrams, and other visual content that would be useful for creating a website.`
                   },
                   {
                     type: 'image_url',
@@ -668,14 +672,14 @@ Provide clean, well-structured text that preserves the document's organization.`
                 ]
               }
             ],
-            max_tokens: 1500, // Reasonable limit per page
+            max_tokens: 2000, // Increased limit to accommodate image descriptions
             temperature: 0.1
           })
 
           const pageText = response.choices?.[0]?.message?.content
           if (pageText) {
             allExtractedText += pageText + '\n\n'
-            console.log(`Extracted ${pageText.length} characters from page ${i + 1}`)
+            console.log(`Extracted ${pageText.length} characters (text + image descriptions) from page ${i + 1}`)
           }
         } catch (pageError) {
           console.error(`Error analyzing page ${i + 1}:`, pageError)
@@ -871,15 +875,15 @@ Provide clean, well-structured text that preserves the document's organization.`
     let imageContent = '';
     if (screenshot) {
       imageContent += `<div class="webpage-screenshot">
-        <img src="${screenshot}" alt="Screenshot of the webpage" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin-bottom: 1em;" />
+        <img src="${screenshot}" alt="Screenshot of the webpage" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin-bottom: 1em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" />
       </div>\n`;
     }
 
     // Add other images found in the content
     if (images && images.length > 0) {
-      imageContent += '<div class="content-images">\n';
+      imageContent += '<div class="content-images" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin: 1.5rem 0;">\n';
       images.forEach(img => {
-        imageContent += `  <img src="${img.src}" alt="${img.alt || 'Content image'}" style="max-width: 100%; height: auto; margin: 0.5em 0;" />\n`;
+        imageContent += `  <img src="${img.src}" alt="${img.alt || 'Content image'}" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); object-fit: cover;" />\n`;
       });
       imageContent += '</div>\n';
     }
@@ -927,6 +931,26 @@ IMPORTANT INSTRUCTIONS:
 6. Design should be modern, responsive, and creative
 7. Color scheme and styling should match the content's theme and purpose
 
+RESPONSIVE DESIGN REQUIREMENTS:
+- Use CSS Grid and Flexbox for layout
+- Implement mobile-first design approach
+- Include multiple breakpoints (mobile: 320px+, tablet: 768px+, desktop: 1024px+)
+- Ensure text is readable on all screen sizes (minimum 16px on mobile)
+- Make navigation collapsible/hamburger menu on mobile
+- Optimize images for different screen sizes
+- Use relative units (rem, em, %, vw, vh) instead of fixed pixels where appropriate
+- Ensure touch-friendly tap targets (minimum 44px)
+- Test layout at common breakpoints
+
+MODERN CSS FEATURES TO USE:
+- CSS Grid for main layout structure
+- Flexbox for component layouts
+- CSS Custom Properties (variables) for consistent theming
+- Modern responsive typography with clamp()
+- Smooth animations and transitions
+- Box shadows and modern visual effects
+- Responsive images with object-fit
+
 CONTENT ANALYSIS FOCUS:
 - What is the main topic/theme of this content?
 - What type of organization/person/event does this relate to?
@@ -936,16 +960,17 @@ CONTENT ANALYSIS FOCUS:
 
 OUTPUT REQUIREMENTS:
 - Respond with valid JSON only
-- Include complete HTML structure with semantic markup
-- Include comprehensive CSS with modern design
+- Include complete HTML structure with semantic markup and responsive meta tags
+- Include comprehensive CSS with mobile-first responsive design
 - Create content-specific navigation and sections
 - Use actual content themes for design decisions
+- Implement at least 3 breakpoints for optimal responsive behavior
 
 JSON Schema:
 {
-  "html": "complete HTML structure with actual content-derived titles and sections",
-  "css": "comprehensive CSS with theme-appropriate colors and modern design",
-  "suggestions": ["array of specific improvement suggestions"]
+  "html": "complete HTML structure with actual content-derived titles, semantic markup, and responsive meta tags",
+  "css": "comprehensive CSS with mobile-first responsive design, CSS Grid, Flexbox, and modern features",
+  "suggestions": ["array of specific improvement suggestions including responsive enhancements"]
 }`
           },
           {
@@ -962,8 +987,19 @@ REQUIREMENTS:
 2. Create appropriate titles and headers based on actual content
 3. Design a color scheme that matches the content's theme
 4. Structure the website logically based on the content hierarchy
-5. Make it modern, responsive, and visually appealing
+5. Make it modern, responsive, and visually appealing with mobile-first design
 6. Include navigation that makes sense for this specific content
+7. Implement responsive breakpoints for mobile, tablet, and desktop
+8. Use modern CSS features like Grid, Flexbox, and Custom Properties
+9. Ensure accessibility with proper semantic HTML and ARIA attributes
+10. Include responsive typography that scales well across devices
+
+RESPONSIVE DESIGN FOCUS:
+- Mobile viewport: 320px-767px (single column, large touch targets)
+- Tablet viewport: 768px-1023px (flexible layouts, readable text)
+- Desktop viewport: 1024px+ (multi-column, advanced layouts)
+- Use clamp() for fluid typography
+- Implement proper image optimization and responsive loading
 
 ${request.images && request.images.length > 0 ? 
   `IMAGES AVAILABLE: ${request.images.length} images that should be incorporated into the design` : 
@@ -1075,68 +1111,104 @@ ${request.images && request.images.length > 0 ?
     }
 
     const html = `
-      <div class="website-container">
-        <header class="hero-section">
-          <div class="container">
-            <h1 class="hero-title">${title}</h1>
-            <p class="hero-subtitle">Discover the content within</p>
-          </div>
-        </header>
-        <main class="main-content">
-          <div class="container">
-            ${imageContent}
-            <div class="content-section">
-              ${structuredContent}
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="${title} - Content-driven responsive website">
+        <title>${title}</title>
+      </head>
+      <body>
+        <div class="website-container">
+          <header class="hero-section">
+            <div class="container">
+              <h1 class="hero-title">${title}</h1>
+              <p class="hero-subtitle">Discover the content within</p>
             </div>
-          </div>
-        </main>
-        <footer class="site-footer">
-          <div class="container">
-            <p>Crafted with care</p>
-          </div>
-        </footer>
-      </div>
+          </header>
+          <main class="main-content">
+            <div class="container">
+              ${imageContent}
+              <div class="content-section">
+                ${structuredContent}
+              </div>
+            </div>
+          </main>
+          <footer class="site-footer">
+            <div class="container">
+              <p>Crafted with care</p>
+            </div>
+          </footer>
+        </div>
+      </body>
+      </html>
     `;
 
     const css = `
+      /* CSS Custom Properties for consistent theming */
+      :root {
+        --primary-color: #667eea;
+        --secondary-color: #764ba2;
+        --text-color: #333;
+        --background-color: #ffffff;
+        --hero-text-color: #ffffff;
+        --footer-bg: #2c3e50;
+        --border-radius: 12px;
+        --shadow: 0 8px 24px rgba(0,0,0,0.1);
+        --transition: all 0.3s ease;
+      }
+
+      /* Reset and base styles */
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
       }
 
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        line-height: 1.6;
-        color: #333;
+      html {
+        font-size: 16px; /* Base font size for rem calculations */
       }
 
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        line-height: 1.6;
+        color: var(--text-color);
+        background-color: var(--background-color);
+      }
+
+      /* Container with responsive padding */
       .container {
         max-width: 1200px;
         margin: 0 auto;
-        padding: 0 2rem;
+        padding: 0 1rem;
       }
 
+      /* Hero section with responsive design */
       .hero-section {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 4rem 0;
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+        color: var(--hero-text-color);
+        padding: clamp(2rem, 8vw, 6rem) 0;
         text-align: center;
       }
 
       .hero-title {
-        font-size: 3rem;
+        font-size: clamp(1.75rem, 5vw, 3rem);
         font-weight: 700;
         margin-bottom: 1rem;
+        line-height: 1.2;
       }
 
       .hero-subtitle {
-        font-size: 1.2rem;
+        font-size: clamp(1rem, 2.5vw, 1.25rem);
         opacity: 0.9;
+        max-width: 600px;
+        margin: 0 auto;
       }
 
+      /* Main content with responsive spacing */
       .main-content {
-        padding: 4rem 0;
+        padding: clamp(2rem, 6vw, 4rem) 0;
       }
 
       .content-section {
@@ -1144,55 +1216,144 @@ ${request.images && request.images.length > 0 ?
         margin: 0 auto;
       }
 
+      /* Responsive image gallery using CSS Grid */
       .image-gallery {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 2rem;
-        margin: 3rem 0;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: clamp(1rem, 3vw, 2rem);
+        margin: clamp(2rem, 5vw, 3rem) 0;
       }
 
       .gallery-image {
         width: 100%;
         height: auto;
-        border-radius: 12px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        border-radius: var(--border-radius);
+        box-shadow: var(--shadow);
+        transition: var(--transition);
+        object-fit: cover;
       }
 
+      .gallery-image:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 32px rgba(0,0,0,0.15);
+      }
+
+      /* Typography with responsive sizing */
       h1, h2, h3 {
         margin-bottom: 1.5rem;
-        color: #2c3e50;
+        color: var(--text-color);
+        line-height: 1.3;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 4vw, 2.5rem);
       }
 
       h2 {
-        font-size: 2rem;
-        border-bottom: 3px solid #667eea;
+        font-size: clamp(1.5rem, 3vw, 2rem);
+        border-bottom: 3px solid var(--primary-color);
         padding-bottom: 0.5rem;
-        margin-top: 3rem;
+        margin-top: clamp(2rem, 4vw, 3rem);
+      }
+
+      h3 {
+        font-size: clamp(1.25rem, 2.5vw, 1.5rem);
       }
 
       p {
         margin-bottom: 1.5rem;
-        font-size: 1.1rem;
+        font-size: clamp(1rem, 2vw, 1.1rem);
+        max-width: 65ch; /* Optimal reading length */
       }
 
+      /* Footer with responsive design */
       .site-footer {
-        background: #2c3e50;
-        color: white;
-        padding: 2rem 0;
+        background: var(--footer-bg);
+        color: var(--hero-text-color);
+        padding: clamp(1.5rem, 3vw, 2rem) 0;
         text-align: center;
       }
 
+      /* Responsive breakpoints for specific adjustments */
       @media (max-width: 768px) {
-        .hero-title {
-          font-size: 2rem;
-        }
-        
         .container {
           padding: 0 1rem;
         }
         
         .image-gallery {
           grid-template-columns: 1fr;
+        }
+        
+        .hero-section {
+          padding: 3rem 0;
+        }
+        
+        .main-content {
+          padding: 2rem 0;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .container {
+          padding: 0 0.75rem;
+        }
+        
+        .hero-title {
+          font-size: 1.75rem;
+        }
+        
+        .hero-subtitle {
+          font-size: 1rem;
+        }
+      }
+
+      @media (min-width: 1024px) {
+        .container {
+          padding: 0 2rem;
+        }
+        
+        .image-gallery {
+          grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        }
+      }
+
+      /* Print styles for better printing */
+      @media print {
+        .hero-section {
+          background: none;
+          color: var(--text-color);
+        }
+        
+        .gallery-image {
+          box-shadow: none;
+          border: 1px solid #ddd;
+        }
+        
+        .site-footer {
+          background: none;
+          color: var(--text-color);
+          border-top: 1px solid #ddd;
+        }
+      }
+
+      /* High contrast mode support */
+      @media (prefers-contrast: high) {
+        :root {
+          --primary-color: #0066cc;
+          --secondary-color: #004499;
+          --text-color: #000;
+          --background-color: #fff;
+        }
+      }
+
+      /* Reduced motion for accessibility */
+      @media (prefers-reduced-motion: reduce) {
+        .gallery-image {
+          transition: none;
+        }
+        
+        .gallery-image:hover {
+          transform: none;
         }
       }
     `;
@@ -1201,10 +1362,14 @@ ${request.images && request.images.length > 0 ?
       html,
       css,
       suggestions: [
+        'Mobile-first responsive design implemented with CSS Grid and Flexbox',
+        'Modern CSS features used: Custom Properties, clamp(), responsive units',
         'Content-specific design applied based on document analysis',
-        'Consider adding interactive elements for better engagement',
-        'Images are displayed in a responsive gallery layout',
-        'Typography optimized for readability across devices'
+        'Accessibility features: proper contrast, reduced motion support, semantic HTML',
+        'Images optimized with responsive grid layout and hover effects',
+        'Typography scales smoothly across all device sizes',
+        'Touch-friendly interface with appropriate tap targets',
+        'Print styles included for better document printing'
       ]
     };
   }

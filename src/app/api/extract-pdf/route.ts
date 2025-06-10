@@ -29,7 +29,7 @@ To extract content from this document, consider:
 
 This document can still serve as a foundation for creating a modern website. The AI can help structure and format any manually provided content.
 
-*Note: OpenAI Vision API is the primary method for PDF content extraction. For best results, ensure the PDF has clear, readable text and proper formatting.*`
+*Note: OpenAI Vision API is the primary method for PDF content extraction and image description. For best results, ensure the PDF has clear, readable text and properly visible images.*`
 }
 
 export async function POST(request: NextRequest) {
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       const result = await azureOpenAIService.analyzePdfWithVision(buffer, pdfFile.name)
       cleanedText = result.text
       pageCount = result.pageCount
-      console.log('Successfully extracted content using Azure OpenAI Vision API service')
+      console.log('Successfully extracted content and image descriptions using Azure OpenAI Vision API service')
     } catch (visionError) {
       console.error('Vision API extraction failed:', visionError)
       // Use fallback content generation
@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
       .trim()
     
     // Limit content length for processing
-    if (cleanedText.length > 8000) {
-      cleanedText = cleanedText.substring(0, 8000) + '\n\n[Content truncated for processing - full document analysis available]'
+    if (cleanedText.length > 10000) {
+      cleanedText = cleanedText.substring(0, 10000) + '\n\n[Content truncated for processing - full document analysis with image descriptions available]'
     }
     
     if (!cleanedText || cleanedText.length < 20) {
@@ -91,12 +91,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       content: cleanedText,
-      images: [], // Vision API can identify images, but we'll focus on text extraction for now
+      images: [], // Image descriptions are now included in the content text
       metadata: {
         pages: pageCount,
         size: buffer.length,
         filename: pdfFile.name,
-        extractionMethod: 'OpenAI Vision API'
+        extractionMethod: 'OpenAI Vision API with Image Descriptions',
+        features: ['text_extraction', 'image_descriptions', 'structure_preservation']
       }
     })
 
