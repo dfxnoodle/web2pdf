@@ -1,0 +1,28 @@
+Sample PDF Content for Testing
+
+Introduction
+This is a sample document that contains structured content to test the PDF to Web conversion functionality.
+
+Main Content
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+Section 1: Features
+- Modern design principles
+- Responsive layout
+- User-friendly interface
+- Cross-platform compatibility
+
+Section 2: Benefits
+The benefits of using this system include:
+1. Improved efficiency
+2. Better user experience
+3. Cost-effective solution
+4. Scalable architecture
+
+Conclusion
+This document demonstrates the basic structure and content that can be converted from PDF to a modern website format using AI-powered tools.
+
+Contact Information
+Email: example@domain.com
+Phone: (555) 123-4567
+Website: www.example.com

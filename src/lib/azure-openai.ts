@@ -561,6 +561,151 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
     }
   }
 
+  // OpenAI Vision API for PDF content extraction using image files
+  async analyzePdfWithVision(buffer: Buffer, filename: string): Promise<{text: string, pageCount: number}> {
+    if (!client || !hasAzureConfig) {
+      throw new Error('Azure OpenAI not configured for Vision API')
+    }
+
+    try {
+      console.log('Converting PDF to images for Vision API analysis...')
+      
+      // Convert PDF to images using pdf2pic
+      const pdf2pic = (await import('pdf2pic')).default
+      const fs = await import('fs')
+      const path = await import('path')
+      const os = await import('os')
+      
+      // Create temporary directory for images
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-vision-'))
+      const tempPdfPath = path.join(tempDir, 'temp.pdf')
+      
+      // Write buffer to temporary file
+      fs.writeFileSync(tempPdfPath, buffer)
+      
+      // Convert PDF to images (limit to first 3 pages to avoid token limits)
+      const convert = pdf2pic.fromPath(tempPdfPath, {
+        density: 150, // DPI for good quality
+        saveFilename: 'page',
+        savePath: tempDir,
+        format: 'png',
+        width: 1024, // Reasonable width to balance quality and file size
+        height: 1400 // Reasonable height for typical document pages
+      })
+      
+      // Convert up to 3 pages to avoid token limits
+      const maxPages = 3
+      let convertedPages: string[] = []
+      
+      try {
+        for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+          try {
+            const result = await convert(pageNum, { responseType: 'image' })
+            if (result && result.path) {
+              convertedPages.push(result.path)
+              console.log(`Converted page ${pageNum} to: ${result.path}`)
+            }
+          } catch (pageError) {
+            // Page might not exist, stop here
+            console.log(`Converted ${pageNum - 1} pages from PDF`)
+            break
+          }
+        }
+      } catch (conversionError) {
+        console.error('PDF conversion error:', conversionError)
+        throw new Error('Failed to convert PDF to images')
+      }
+      
+      if (convertedPages.length === 0) {
+        throw new Error('No pages could be converted from PDF')
+      }
+      
+      console.log(`Converted ${convertedPages.length} pages to images`)
+      
+      // Analyze each page with Vision API using image files directly
+      let allExtractedText = ''
+      
+      for (let i = 0; i < convertedPages.length; i++) {
+        const imagePath = convertedPages[i]
+        console.log(`Analyzing page ${i + 1} with Vision API using file: ${imagePath}`)
+        
+        try {
+          // Read image file as buffer for Vision API
+          const imageBuffer = fs.readFileSync(imagePath)
+          const imageBase64 = imageBuffer.toString('base64')
+          
+          const response = await client.chat.completions.create({
+            model: 'gpt-4o', // Use specific Vision model
+            messages: [
+              {
+                role: 'system',
+                content: `You are an expert document analysis AI. Extract all visible text from this page image.
+
+Instructions:
+1. Read and transcribe ALL visible text accurately
+2. Maintain the original structure and formatting
+3. Preserve headings, paragraphs, lists, and tables
+4. Keep the natural reading order
+5. For tables, format them in a readable way
+6. Ignore watermarks or decorative elements
+7. If this is page ${i + 1} of a multi-page document, start with "=== Page ${i + 1} ===" 
+
+Provide clean, well-structured text that preserves the document's organization.`
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Extract all text from page ${i + 1} of "${filename}". Maintain structure and formatting.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:image/png;base64,${imageBase64}`
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 1500, // Reasonable limit per page
+            temperature: 0.1
+          })
+
+          const pageText = response.choices?.[0]?.message?.content
+          if (pageText) {
+            allExtractedText += pageText + '\n\n'
+            console.log(`Extracted ${pageText.length} characters from page ${i + 1}`)
+          }
+        } catch (pageError) {
+          console.error(`Error analyzing page ${i + 1}:`, pageError)
+          allExtractedText += `\n=== Page ${i + 1} (Analysis Failed) ===\n[Content could not be extracted from this page]\n\n`
+        }
+      }
+      
+      // Clean up temporary files
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true })
+      } catch (cleanupError) {
+        console.warn('Failed to clean up temporary files:', cleanupError)
+      }
+      
+      if (!allExtractedText.trim()) {
+        throw new Error('No content extracted from any pages')
+      }
+
+      console.log(`Total extracted text length: ${allExtractedText.length} characters`)
+      
+      return {
+        text: allExtractedText.trim(),
+        pageCount: convertedPages.length
+      }
+    } catch (error) {
+      console.error('Vision API analysis failed:', error)
+      throw new Error(`Vision API extraction failed: ${(error as Error).message}`)
+    }
+  }
+
   private combineTypesettingResults(results: TypesettingResponse[]): TypesettingResponse {
     if (results.length === 0) {
       throw new Error('No typesetting results to combine');
@@ -750,6 +895,318 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
         </main>
       </article>
     `.trim();
+  }
+
+  // Creative website generation using AI to analyze content and create unique designs
+  async generateCreativeWebsite(request: {
+    content: string;
+    websiteType: string;
+    images?: Array<{data: string, type: string, description?: string}>;
+    styling?: any;
+  }): Promise<{html: string, css: string, suggestions: string[]}> {
+    // Check if Azure OpenAI is available
+    if (!client || !hasAzureConfig) {
+      console.log('Azure OpenAI not available, using fallback website generation');
+      return this.createFallbackWebsite(request);
+    }
+
+    try {
+      const response = await client.chat.completions.create({
+        model: 'model-router',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an expert web designer and content analyst. Your task is to analyze the provided content and create a beautiful, unique website that reflects the actual content, theme, and purpose of the document.
+
+IMPORTANT INSTRUCTIONS:
+1. Analyze the content to understand its theme, purpose, and key elements
+2. Extract meaningful titles, headings, and structure from the actual content
+3. Create a website design that matches the content's tone and purpose
+4. DO NOT use generic titles like "Generated Website" or "Generated from PDF"
+5. Use actual content to create meaningful headers, navigation, and sections
+6. Design should be modern, responsive, and creative
+7. Color scheme and styling should match the content's theme and purpose
+
+CONTENT ANALYSIS FOCUS:
+- What is the main topic/theme of this content?
+- What type of organization/person/event does this relate to?
+- What are the key sections and information hierarchy?
+- What design style would best represent this content?
+- What colors, fonts, and layout would be most appropriate?
+
+OUTPUT REQUIREMENTS:
+- Respond with valid JSON only
+- Include complete HTML structure with semantic markup
+- Include comprehensive CSS with modern design
+- Create content-specific navigation and sections
+- Use actual content themes for design decisions
+
+JSON Schema:
+{
+  "html": "complete HTML structure with actual content-derived titles and sections",
+  "css": "comprehensive CSS with theme-appropriate colors and modern design",
+  "suggestions": ["array of specific improvement suggestions"]
+}`
+          },
+          {
+            role: 'user',
+            content: `Analyze this content and create a unique, creative website that reflects its actual theme and purpose:
+
+CONTENT TO ANALYZE:
+${request.content}
+
+WEBSITE TYPE: ${request.websiteType}
+
+REQUIREMENTS:
+1. Extract the main theme/topic from the content
+2. Create appropriate titles and headers based on actual content
+3. Design a color scheme that matches the content's theme
+4. Structure the website logically based on the content hierarchy
+5. Make it modern, responsive, and visually appealing
+6. Include navigation that makes sense for this specific content
+
+${request.images && request.images.length > 0 ? 
+  `IMAGES AVAILABLE: ${request.images.length} images that should be incorporated into the design` : 
+  'No images available'}`
+          }
+        ],
+        max_tokens: 12000,
+        temperature: 0.3,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "CreativeWebsiteResponse",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                html: {
+                  type: "string",
+                  description: "Complete HTML structure with content-specific design"
+                },
+                css: {
+                  type: "string", 
+                  description: "Comprehensive CSS with theme-appropriate styling"
+                },
+                suggestions: {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  },
+                  description: "Specific improvement suggestions for this content"
+                }
+              },
+              required: ["html", "css", "suggestions"],
+              additionalProperties: false
+            }
+          }
+        }
+      });
+
+      const result = response.choices[0]?.message?.content;
+      if (!result) {
+        throw new Error('No response from Azure OpenAI');
+      }
+
+      try {
+        const cleanedResult = this.cleanJsonResponse(result);
+        const parsed = JSON.parse(cleanedResult);
+        
+        // Process images if available
+        let processedHtml = parsed.html;
+        if (request.images && request.images.length > 0) {
+          request.images.forEach((image, index) => {
+            const placeholder = `[IMAGE_${index + 1}]`;
+            const imgTag = `<img src="data:${image.type};base64,${image.data}" alt="${image.description || `Image ${index + 1}`}" class="content-image">`;
+            processedHtml = processedHtml.replace(new RegExp(placeholder, 'g'), imgTag);
+          });
+        }
+        
+        return {
+          html: processedHtml,
+          css: parsed.css,
+          suggestions: parsed.suggestions
+        };
+      } catch (parseError) {
+        console.error('Failed to parse creative website response:', parseError);
+        throw new Error('Invalid JSON response from Azure OpenAI');
+      }
+    } catch (error) {
+      console.error('Error generating creative website:', error);
+      // Fallback to basic website generation
+      return this.createFallbackWebsite(request);
+    }
+  }
+
+  private createFallbackWebsite(request: {
+    content: string;
+    websiteType: string;
+    images?: Array<{data: string, type: string, description?: string}>;
+  }): {html: string, css: string, suggestions: string[]} {
+    // Analyze content to extract a meaningful title
+    const lines = request.content.split('\n').filter(line => line.trim());
+    const firstLine = lines[0] || 'Document';
+    
+    // Try to find a meaningful title from the content
+    let title = 'Document';
+    if (firstLine.length < 100 && firstLine.length > 5) {
+      title = firstLine.replace(/[=#\*\-]/g, '').trim();
+    }
+    
+    // Extract key sections
+    const sections = request.content.split('\n\n').filter(section => section.trim());
+    const structuredContent = sections.map(section => {
+      const trimmed = section.trim();
+      if (trimmed.length < 100 && !trimmed.endsWith('.')) {
+        return `<h2>${trimmed}</h2>`;
+      } else {
+        return `<p>${trimmed}</p>`;
+      }
+    }).join('\n');
+
+    // Include images
+    let imageContent = '';
+    if (request.images && request.images.length > 0) {
+      imageContent = '<div class="image-gallery">';
+      request.images.forEach((image, index) => {
+        imageContent += `<img src="data:${image.type};base64,${image.data}" alt="${image.description || `Image ${index + 1}`}" class="gallery-image">`;
+      });
+      imageContent += '</div>';
+    }
+
+    const html = `
+      <div class="website-container">
+        <header class="hero-section">
+          <div class="container">
+            <h1 class="hero-title">${title}</h1>
+            <p class="hero-subtitle">Discover the content within</p>
+          </div>
+        </header>
+        <main class="main-content">
+          <div class="container">
+            ${imageContent}
+            <div class="content-section">
+              ${structuredContent}
+            </div>
+          </div>
+        </main>
+        <footer class="site-footer">
+          <div class="container">
+            <p>Crafted with care</p>
+          </div>
+        </footer>
+      </div>
+    `;
+
+    const css = `
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem;
+      }
+
+      .hero-section {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 4rem 0;
+        text-align: center;
+      }
+
+      .hero-title {
+        font-size: 3rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+      }
+
+      .hero-subtitle {
+        font-size: 1.2rem;
+        opacity: 0.9;
+      }
+
+      .main-content {
+        padding: 4rem 0;
+      }
+
+      .content-section {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .image-gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2rem;
+        margin: 3rem 0;
+      }
+
+      .gallery-image {
+        width: 100%;
+        height: auto;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+      }
+
+      h1, h2, h3 {
+        margin-bottom: 1.5rem;
+        color: #2c3e50;
+      }
+
+      h2 {
+        font-size: 2rem;
+        border-bottom: 3px solid #667eea;
+        padding-bottom: 0.5rem;
+        margin-top: 3rem;
+      }
+
+      p {
+        margin-bottom: 1.5rem;
+        font-size: 1.1rem;
+      }
+
+      .site-footer {
+        background: #2c3e50;
+        color: white;
+        padding: 2rem 0;
+        text-align: center;
+      }
+
+      @media (max-width: 768px) {
+        .hero-title {
+          font-size: 2rem;
+        }
+        
+        .container {
+          padding: 0 1rem;
+        }
+        
+        .image-gallery {
+          grid-template-columns: 1fr;
+        }
+      }
+    `;
+
+    return {
+      html,
+      css,
+      suggestions: [
+        'Content-specific design applied based on document analysis',
+        'Consider adding interactive elements for better engagement',
+        'Images are displayed in a responsive gallery layout',
+        'Typography optimized for readability across devices'
+      ]
+    };
   }
 }
 

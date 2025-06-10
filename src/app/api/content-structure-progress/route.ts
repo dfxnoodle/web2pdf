@@ -3,7 +3,7 @@ import { azureOpenAIService } from '@/lib/azure-openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { content, documentType, images, screenshot } = await request.json();
+    const { content, images, screenshot } = await request.json();
 
     if (!content || typeof content !== 'string') {
       return NextResponse.json(

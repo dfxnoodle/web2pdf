@@ -1,0 +1,19 @@
+This is a test PDF document.
+
+## Introduction
+This document demonstrates the PDF to Web conversion functionality.
+
+### Features
+- Automatic text extraction
+- Image preservation
+- Modern web design
+- Responsive layout
+
+### Content Analysis
+The AI will analyze this content and generate a modern website with proper HTML structure and CSS styling.
+
+**Contact Information:**
+Email: test@example.com
+Phone: (555) 123-4567
+
+Thank you for testing our PDF2Web converter!
