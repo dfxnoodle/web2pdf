@@ -3,7 +3,7 @@ import { azureOpenAIService } from '@/lib/azure-openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { content, documentType } = await request.json();
+    const { content, documentType, images, screenshot } = await request.json();
 
     if (!content || typeof content !== 'string') {
       return NextResponse.json(
@@ -22,8 +22,8 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(data));
         };
 
-        // Process content with progress updates
-        azureOpenAIService.generateContentStructure(content, onProgress)
+        // Process content with progress updates, including images
+        azureOpenAIService.generateContentStructure(content, images, screenshot, onProgress)
           .then((structuredContent) => {
             // Send final result
             const finalData = `data: ${JSON.stringify({ 

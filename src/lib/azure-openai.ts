@@ -32,6 +32,8 @@ export interface TypesettingRequest {
   content: string;
   documentType: 'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar';
   outputFormat: 'pdf' | 'html';
+  images?: Array<{src: string, alt: string}>; // Add image support
+  screenshot?: string; // Add screenshot support
   styling?: {
     fontSize?: number;
     fontFamily?: string;
@@ -378,18 +380,34 @@ For business documents, focus on:
 - Executive summary styling when present`;
     }
 
+    // Add image handling instructions
+    let imageInstructions = '';
+    if (request.images && request.images.length > 0) {
+      imageInstructions += `\n\nImages to include in the document:\n`;
+      request.images.forEach((img, index) => {
+        imageInstructions += `${index + 1}. ${img.src} (${img.alt || 'No description'})\n`;
+      });
+      imageInstructions += '\nInstructions for images:\n- Use server-side image processing to avoid CORS issues\n- Include images with proper styling and captions\n- Ensure images are responsive and print-friendly\n- Position images contextually within the content';
+    }
+
+    if (request.screenshot) {
+      imageInstructions += '\n\nA webpage screenshot is available. Include it prominently as a visual representation of the source page.';
+    }
+
     return `Improve the formatting of this ${request.documentType} content for ${request.outputFormat}:
 
 ${request.content}
 
 ${specificInstructions}
 
+${imageInstructions}
+
 Please provide:
-1. Enhanced HTML with proper semantic structure
-2. Professional CSS styling for ${request.documentType} documents
+1. Enhanced HTML with proper semantic structure and embedded images
+2. Professional CSS styling for ${request.documentType} documents with image support
 3. Brief suggestions for improvement
 
-Focus on readability and professional appearance. Keep CSS concise and avoid complex rules.`;
+Focus on readability and professional appearance. Keep CSS concise and avoid complex rules. For images, use URLs directly - the PDF generation will handle them server-side.`;
   }
 
   private parseTypesettingResponse(response: string): TypesettingResponse {
@@ -424,19 +442,21 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
 
   async generateContentStructure(
     rawContent: string,
+    images?: Array<{src: string, alt: string}>,
+    screenshot?: string,
     onProgress?: (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => void
   ): Promise<string> {
     // Check if Azure OpenAI is available
     if (!client || !hasAzureConfig) {
       console.log('Azure OpenAI not available, using fallback content structure');
-      return this.createBasicStructure(rawContent);
+      return this.createBasicStructure(rawContent, images, screenshot);
     }
 
     // Use chunking for large content
     return await this.processContentInChunks(
       rawContent,
       async (chunk: string, isLast: boolean, chunkIndex: number) => {
-        return await this.processContentStructureChunk(chunk, chunkIndex, isLast);
+        return await this.processContentStructureChunk(chunk, chunkIndex, isLast, images, screenshot);
       },
       (results: string[]) => this.combineContentStructureResults(results),
       onProgress
@@ -446,9 +466,25 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
   private async processContentStructureChunk(
     content: string, 
     chunkIndex: number, 
-    isLast: boolean
+    isLast: boolean,
+    images?: Array<{src: string, alt: string}>,
+    screenshot?: string
   ): Promise<string> {
     try {
+      // Build the prompt with image information
+      let imageContext = '';
+      if (images && images.length > 0) {
+        imageContext += '\n\nImages found in the content:\n';
+        images.forEach((img, index) => {
+          imageContext += `${index + 1}. ${img.src} (Alt: ${img.alt || 'No description'})\n`;
+        });
+        imageContext += '\nPlease include these images in appropriate places within the structured content using <img> tags with the original URLs.';
+      }
+      
+      if (screenshot) {
+        imageContext += '\n\nA screenshot of the webpage is available. You can reference it as the main page visual. Include it at the beginning of the content as a representative image of the webpage.';
+      }
+
       const response = await client!.chat.completions.create({
         model: 'model-router',
         messages: [
@@ -458,11 +494,17 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
 
 ${chunkIndex > 0 ? 'This is a continuation of a larger document. Maintain consistent heading hierarchy and structure.' : ''}
 
+When including images:
+- Use the exact image URLs provided
+- Place images contextually where they make sense in the content
+- Include proper alt attributes for accessibility
+- Use responsive image styling
+
 IMPORTANT: You must respond with valid JSON only. Do not include any markdown formatting, explanations, or text outside the JSON structure. Ensure all strings are properly escaped.`
           },
           {
             role: 'user',
-            content: `Please structure this content with proper HTML semantics${chunkIndex > 0 ? ' (continuation of larger document)' : ''}:\n\n${content}`
+            content: `Please structure this content with proper HTML semantics${chunkIndex > 0 ? ' (continuation of larger document)' : ''}:\n\n${content}${imageContext}`
           }
         ],
         max_tokens: 9999,
@@ -664,7 +706,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
     `;
   }
 
-  private createBasicStructure(content: string): string {
+  private createBasicStructure(content: string, images?: Array<{src: string, alt: string}>, screenshot?: string): string {
     // Create a basic HTML structure from raw content
     const paragraphs = content.split('\n\n').filter(p => p.trim());
     
@@ -680,12 +722,30 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
       }
     }).join('\n');
 
+    // Add screenshot at the beginning if available
+    let imageContent = '';
+    if (screenshot) {
+      imageContent += `<div class="webpage-screenshot">
+        <img src="${screenshot}" alt="Screenshot of the webpage" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin-bottom: 1em;" />
+      </div>\n`;
+    }
+
+    // Add other images found in the content
+    if (images && images.length > 0) {
+      imageContent += '<div class="content-images">\n';
+      images.forEach(img => {
+        imageContent += `  <img src="${img.src}" alt="${img.alt || 'Content image'}" style="max-width: 100%; height: auto; margin: 0.5em 0;" />\n`;
+      });
+      imageContent += '</div>\n';
+    }
+
     return `
       <article>
         <header>
           <h1>Document</h1>
         </header>
         <main>
+          ${imageContent}
           ${structuredContent}
         </main>
       </article>

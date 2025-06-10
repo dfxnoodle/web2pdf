@@ -21,7 +21,35 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
   const [processingProgress, setProcessingProgress] = useState(0);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [images, setImages] = useState<Array<{src: string, alt: string}>>([]);
+  const [selectedImages, setSelectedImages] = useState<Array<{src: string, alt: string}>>([]);
+  const [screenshot, setScreenshot] = useState('');
+  const [includeScreenshot, setIncludeScreenshot] = useState(true);
   const previewRef = useRef<HTMLDivElement>(null);
+
+  // Helper functions for image selection
+  const toggleImageSelection = (image: {src: string, alt: string}) => {
+    setSelectedImages(prev => {
+      const isSelected = prev.some(img => img.src === image.src);
+      if (isSelected) {
+        return prev.filter(img => img.src !== image.src);
+      } else {
+        return [...prev, image];
+      }
+    });
+  };
+
+  const selectAllImages = () => {
+    setSelectedImages([...images]);
+  };
+
+  const deselectAllImages = () => {
+    setSelectedImages([]);
+  };
+
+  const isImageSelected = (image: {src: string, alt: string}) => {
+    return selectedImages.some(img => img.src === image.src);
+  };
 
   const fetchWebContent = async () => {
     if (!url.trim()) {
@@ -55,6 +83,10 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
 
       const result = await response.json();
       setFetchedContent(result.content);
+      setImages(result.metadata?.images || []);
+      setSelectedImages([]); // Reset selected images when fetching new content
+      setScreenshot(result.metadata?.screenshot || '');
+      setIncludeScreenshot(true); // Default to including screenshot
       setStructuredContent(''); // Reset structured content
       setSuggestions([]);
     } catch (error) {
@@ -83,7 +115,9 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
       
       const structuredHtml = await processWithServerSentEvents('/api/content-structure-progress', {
         content: fetchedContent,
-        documentType
+        documentType,
+        images: selectedImages,
+        screenshot: includeScreenshot ? screenshot : ''
       }, (progress) => {
         setProcessingStep(progress.step);
         // Map content structure progress to 15-50% range
@@ -101,6 +135,8 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
         content: structuredHtml,
         documentType,
         outputFormat: 'pdf' as const,
+        images: selectedImages,
+        screenshot: includeScreenshot ? screenshot : '',
         styling: {
           fontSize: 12,
           fontFamily: 'Times New Roman, serif',
@@ -626,6 +662,151 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
                   className="w-full h-32 p-4 text-sm border-2 border-gray-300 rounded-lg bg-white resize-none focus:outline-none text-gray-900 placeholder-gray-500"
                   placeholder="Fetched content will appear here..."
                 />
+              </div>
+            )}
+
+            {/* Image Selection Interface */}
+            {(images.length > 0 || screenshot) && (
+              <div className="bg-blue-50/90 backdrop-blur-md rounded-xl p-6 border border-blue-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-blue-800 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Image Selection
+                  </h3>
+                  {images.length > 0 && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={selectAllImages}
+                        className="text-xs px-3 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        onClick={deselectAllImages}
+                        className="text-xs px-3 py-1 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Screenshot Selection */}
+                {screenshot && (
+                  <div className="mb-6">
+                    <div className="flex items-center gap-3 mb-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeScreenshot}
+                          onChange={(e) => setIncludeScreenshot(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                        />
+                        <span className="text-sm font-medium text-blue-800">📸 Include webpage screenshot</span>
+                      </label>
+                    </div>
+                    {includeScreenshot && (
+                      <div className="ml-6 p-3 bg-white rounded-lg border border-blue-200">
+                        <img
+                          src={screenshot}
+                          alt="Webpage screenshot"
+                          className="max-w-full h-auto max-h-32 rounded border"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                        <p className="text-xs text-gray-600 mt-2">Full webpage screenshot</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Content Images Selection */}
+                {images.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-blue-800 mb-3">
+                      Content Images ({selectedImages.length}/{images.length} selected)
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-64 overflow-y-auto">
+                      {images.map((image, index) => {
+                        const isSelected = isImageSelected(image);
+                        const isLikelyThumbnail = image.src.includes('thumb') || 
+                                                image.src.includes('icon') || 
+                                                image.src.includes('logo') || 
+                                                image.alt?.toLowerCase().includes('logo') ||
+                                                image.alt?.toLowerCase().includes('icon');
+                        
+                        return (
+                          <div
+                            key={`${image.src}-${index}`}
+                            className={`relative p-2 rounded-lg border-2 transition-all cursor-pointer ${
+                              isSelected 
+                                ? 'border-blue-500 bg-blue-50' 
+                                : 'border-gray-200 bg-white hover:border-blue-300'
+                            }`}
+                            onClick={() => toggleImageSelection(image)}
+                          >
+                            <div className="relative">
+                              <img
+                                src={image.src}
+                                alt={image.alt || `Image ${index + 1}`}
+                                className="w-full h-20 object-cover rounded"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0zNSA2NUw0NS41IDUyLjVMNTUgNjJMNzUgNDBWNzVIMjVWNDBMMzUgNjVaIiBmaWxsPSIjOUI5QkExIi8+CjxjaXJjbGUgY3g9IjY1IiBjeT0iMzUiIHI9IjUiIGZpbGw9IiM5QjlCQTEiLz4KPC9zdmc+';
+                                  target.classList.add('opacity-50');
+                                }}
+                              />
+                              <div className="absolute top-1 right-1">
+                                <div className={`w-4 h-4 rounded-full border-2 border-white ${
+                                  isSelected ? 'bg-blue-500' : 'bg-gray-300'
+                                } flex items-center justify-center`}>
+                                  {isSelected && (
+                                    <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                  )}
+                                </div>
+                              </div>
+                              {isLikelyThumbnail && (
+                                <div className="absolute bottom-1 left-1">
+                                  <span className="text-xs bg-yellow-100 text-yellow-800 px-1 rounded">Thumbnail?</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-2">
+                              <p className="text-xs text-gray-600 truncate" title={image.alt || 'No description'}>
+                                {image.alt || 'No description'}
+                              </p>
+                              <p className="text-xs text-gray-400 truncate" title={image.src}>
+                                {image.src.split('/').pop() || image.src}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selection Summary */}
+                <div className="mt-4 pt-4 border-t border-blue-200">
+                  <div className="flex items-center justify-between text-sm text-blue-700">
+                    <span>
+                      {(includeScreenshot ? 1 : 0) + selectedImages.length} image{(includeScreenshot ? 1 : 0) + selectedImages.length !== 1 ? 's' : ''} will be included in PDF
+                    </span>
+                    {((includeScreenshot && screenshot) || selectedImages.length > 0) && (
+                      <span className="text-xs text-green-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Ready for processing
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

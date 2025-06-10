@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
+import puppeteer from 'puppeteer';
 
 export async function POST(request: NextRequest) {
   try {
-    const { url } = await request.json();
+    const { url, captureScreenshot = true } = await request.json();
 
     if (!url) {
       return NextResponse.json(
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
       },
-      timeout: 30000, // 30 second timeout
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     });
 
     if (!response.ok) {
@@ -105,10 +106,13 @@ export async function POST(request: NextRequest) {
     
     // If no structured content found, fall back to all text
     if (paragraphs.length === 0) {
-      const allText = contentCheerio.text().trim();
-      if (allText) {
-        // Split into paragraphs by line breaks
-        paragraphs.push(...allText.split(/\n\s*\n/).filter(p => p.trim().length > 10));
+      const bodyElement = contentCheerio('body');
+      if (bodyElement.length > 0) {
+        const fullText = bodyElement.text().trim();
+        if (fullText) {
+          // Split into paragraphs by line breaks
+          paragraphs.push(...fullText.split(/\n\s*\n/).filter((p: string) => p.trim().length > 10));
+        }
       }
     }
     
@@ -129,6 +133,40 @@ export async function POST(request: NextRequest) {
         }
       }
     });
+
+    // Capture webpage screenshot if requested
+    let screenshotUrl = '';
+    if (captureScreenshot) {
+      try {
+        const browser = await puppeteer.launch({
+          headless: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1200, height: 800 });
+        
+        // Navigate to the page
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+        
+        // Take screenshot
+        const screenshot = await page.screenshot({ 
+          type: 'png',
+          fullPage: false, // Capture viewport only for faster processing
+          quality: 80 
+        });
+        
+        await browser.close();
+        
+        // Convert screenshot to data URL for easy inclusion
+        const screenshotBase64 = Buffer.from(screenshot).toString('base64');
+        screenshotUrl = `data:image/png;base64,${screenshotBase64}`;
+        
+      } catch (screenshotError) {
+        console.warn('Failed to capture screenshot:', screenshotError);
+        // Continue without screenshot
+      }
+    }
     
     // Get the original URL for reference
     const originalUrl = new URL(url);
@@ -142,6 +180,7 @@ export async function POST(request: NextRequest) {
         url: originalUrl.href,
         domain: originalUrl.hostname,
         images: images.slice(0, 10), // Limit to first 10 images
+        screenshot: screenshotUrl, // Include webpage screenshot
         wordCount: cleanContent.split(/\s+/).length,
         extractedAt: new Date().toISOString()
       }

@@ -14,10 +14,52 @@ export async function POST(request: NextRequest) {
     // Launch Puppeteer browser
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security', '--disable-features=VizDisplayCompositor']
     });
     
     const page = await browser.newPage();
+    
+    // Set up request interception to handle image CORS issues
+    await page.setRequestInterception(true);
+    
+    page.on('request', async (req) => {
+      if (req.resourceType() === 'image') {
+        const imageUrl = req.url();
+        
+        // Check if it's an external image that might have CORS issues
+        if (imageUrl.startsWith('http') && !imageUrl.includes(request.nextUrl.hostname)) {
+          try {
+            // Fetch image server-side to avoid CORS
+            const response = await fetch(imageUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; PDF Generator)',
+                'Accept': 'image/*',
+              },
+              signal: AbortSignal.timeout(10000),
+            });
+            
+            if (response.ok) {
+              const imageBuffer = await response.arrayBuffer();
+              const contentType = response.headers.get('content-type') || 'image/png';
+              
+              req.respond({
+                status: 200,
+                contentType,
+                body: Buffer.from(imageBuffer),
+              });
+            } else {
+              req.continue();
+            }
+          } catch {
+            req.continue();
+          }
+        } else {
+          req.continue();
+        }
+      } else {
+        req.continue();
+      }
+    });
     
     // Check if htmlContent is already a full HTML document
     const isFullDocument = htmlContent.includes('<!DOCTYPE html>') || htmlContent.includes('<html');
@@ -49,6 +91,48 @@ export async function POST(request: NextRequest) {
               p { margin-bottom: 12px; text-align: justify; }
               ul, ol { margin-bottom: 12px; padding-left: 20px; }
               li { margin-bottom: 6px; }
+              
+              /* Image styling for PDF */
+              img {
+                max-width: 100% !important;
+                height: auto !important;
+                display: block;
+                margin: 1em auto;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                page-break-inside: avoid;
+              }
+              
+              .webpage-screenshot img {
+                max-width: 90%;
+                margin: 1.5em auto;
+                border: 2px solid #333;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+              }
+              
+              .content-images {
+                margin: 1em 0;
+                text-align: center;
+              }
+              
+              .content-images img {
+                margin: 0.5em auto;
+                max-width: 80%;
+                display: inline-block;
+              }
+              
+              /* Handle data URLs (screenshots) */
+              img[src^="data:"] {
+                max-width: 95% !important;
+                border: 2px solid #666;
+              }
+              
+              /* Ensure images don't break across pages */
+              figure, .image-container {
+                page-break-inside: avoid;
+                margin: 1em 0;
+              }
               
               /* Hide interactive elements */
               .button, button, input, textarea, select { display: none !important; }
