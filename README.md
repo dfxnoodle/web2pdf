@@ -21,6 +21,7 @@ A stunning, modern web application that converts structured content to printable
 - Business reports
 - Newsletters
 - General reports
+- Calendars
 
 ## Quick Start
 
@@ -61,7 +62,7 @@ npm run dev
 ### Azure OpenAI Setup
 
 1. Create an Azure OpenAI resource in the Azure portal
-2. Deploy a GPT model (GPT-3.5-turbo or GPT-4 recommended)
+2. Deploy a GPT model (model-router or GPT-4o recommended)
 3. Get your API key, endpoint, and deployment name
 4. Update your `.env.local` file with these credentials
 

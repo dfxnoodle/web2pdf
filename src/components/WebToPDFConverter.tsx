@@ -13,7 +13,7 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
   const [fetchedContent, setFetchedContent] = useState('');
   const [structuredContent, setStructuredContent] = useState('');
   const [customCSS, setCustomCSS] = useState('');
-  const [documentType, setDocumentType] = useState<'academic' | 'business' | 'newsletter' | 'report' | 'article'>('article');
+  const [documentType, setDocumentType] = useState<'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar'>('article');
   const [isFetching, setIsFetching] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -77,33 +77,25 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
     setProcessingProgress(10);
     
     try {
-      // Step 1: Structure the content
+      // Step 1: Structure the content with real-time progress
       setProcessingStep('Analyzing and structuring content...');
-      setProcessingProgress(25);
+      setProcessingProgress(15);
       
-      const structureResponse = await fetch('/api/content-structure', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          content: fetchedContent,
-          documentType 
-        }),
+      const structuredHtml = await processWithServerSentEvents('/api/content-structure-progress', {
+        content: fetchedContent,
+        documentType
+      }, (progress) => {
+        setProcessingStep(progress.step);
+        // Map content structure progress to 15-50% range
+        const mappedProgress = 15 + (progress.percentage * 0.35);
+        setProcessingProgress(Math.round(mappedProgress));
       });
 
-      if (!structureResponse.ok) {
-        throw new Error('Failed to structure content');
-      }
-
-      setProcessingProgress(50);
-      const structureResult = await structureResponse.json();
-      const structuredHtml = structureResult.structuredContent;
       setStructuredContent(structuredHtml);
 
-      // Step 2: Enhance typesetting
+      // Step 2: Enhance typesetting with real-time progress
       setProcessingStep('Enhancing typesetting with AI...');
-      setProcessingProgress(60);
+      setProcessingProgress(55);
       
       const typesettingRequest = {
         content: structuredHtml,
@@ -122,22 +114,13 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
         }
       };
 
-      const typesettingResponse = await fetch('/api/typesetting', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(typesettingRequest),
+      const typesettingResult = await processWithServerSentEvents('/api/typesetting-progress', typesettingRequest, (progress) => {
+        setProcessingStep(progress.step);
+        // Map typesetting progress to 55-95% range
+        const mappedProgress = 55 + (progress.percentage * 0.40);
+        setProcessingProgress(Math.round(mappedProgress));
       });
 
-      if (!typesettingResponse.ok) {
-        throw new Error('Failed to enhance typesetting');
-      }
-
-      setProcessingStep('Applying final formatting...');
-      setProcessingProgress(90);
-      
-      const typesettingResult = await typesettingResponse.json();
       setStructuredContent(typesettingResult.formattedContent);
       setCustomCSS(typesettingResult.styling.css);
       setSuggestions(typesettingResult.suggestions);
@@ -149,13 +132,11 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
       setTimeout(() => {
         setProcessingStep('');
         setProcessingProgress(0);
-      }, 1500);
-      
+      }, 2000);
+
     } catch (error) {
-      console.error('Error processing content with AI:', error);
-      setError('Failed to process content with AI. Please try again.');
-      setProcessingStep('');
-      setProcessingProgress(0);
+      console.error('Error processing content:', error);
+      setError(`Failed to process content: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -382,6 +363,87 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
     }
   };
 
+  // Helper function to handle Server-Sent Events
+  const processWithServerSentEvents = async (
+    endpoint: string, 
+    requestData: any, 
+    onProgress: (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => void
+  ): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      let result: any = null;
+
+      // Make the actual request
+      fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        const readStream = async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader!.read();
+              if (done) break;
+
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split('\n');
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    
+                    if (data.type === 'complete') {
+                      result = data.structuredContent || data.result;
+                      resolve(result);
+                      return;
+                    } else if (data.type === 'error') {
+                      reject(new Error(data.error));
+                      return;
+                    } else {
+                      // Progress update
+                      onProgress({
+                        step: data.step,
+                        percentage: data.percentage,
+                        chunkIndex: data.chunkIndex || 1,
+                        totalChunks: data.totalChunks || 1
+                      });
+                    }
+                  } catch (parseError) {
+                    console.warn('Failed to parse SSE data:', parseError);
+                  }
+                }
+              }
+            }
+          } catch (streamError) {
+            console.error('Stream reading error:', streamError);
+            reject(streamError);
+          }
+        };
+
+        readStream();
+      }).catch(error => {
+        console.error('Fetch error:', error);
+        reject(error);
+      });
+
+      // Timeout fallback
+      setTimeout(() => {
+        if (result === null) {
+          reject(new Error('Request timeout'));
+        }
+      }, 300000); // 5 minute timeout
+    });
+  };
+
   return (
     <div className="relative">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -437,6 +499,7 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
                 <option value="business" className="text-gray-800">💼 Business Document</option>
                 <option value="newsletter" className="text-gray-800">📰 Newsletter</option>
                 <option value="report" className="text-gray-800">📊 Report</option>
+                <option value="calendar" className="text-gray-800">📅 Calendar</option>
               </select>
             </div>
 

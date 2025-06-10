@@ -30,7 +30,7 @@ if (hasAzureConfig) {
 
 export interface TypesettingRequest {
   content: string;
-  documentType: 'academic' | 'business' | 'newsletter' | 'report' | 'article';
+  documentType: 'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar';
   outputFormat: 'pdf' | 'html';
   styling?: {
     fontSize?: number;
@@ -55,12 +55,131 @@ export interface TypesettingResponse {
 }
 
 export class AzureOpenAIService {
-  async improveTypesetting(request: TypesettingRequest): Promise<TypesettingResponse> {
+  // Approximate token estimation (rough calculation: 1 token ≈ 4 characters)
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+
+  // Split content into chunks that fit within token limits
+  private chunkContent(content: string, maxTokens: number = 7000): string[] {
+    const estimatedTokens = this.estimateTokens(content);
+    
+    // If content is small enough, return as single chunk
+    if (estimatedTokens <= maxTokens) {
+      return [content];
+    }
+
+    const chunks: string[] = [];
+    const paragraphs = content.split('\n\n').filter(p => p.trim());
+    
+    let currentChunk = '';
+    let currentTokens = 0;
+
+    for (const paragraph of paragraphs) {
+      const paragraphTokens = this.estimateTokens(paragraph);
+      
+      // If adding this paragraph would exceed the limit, save current chunk and start new one
+      if (currentTokens + paragraphTokens > maxTokens && currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = paragraph;
+        currentTokens = paragraphTokens;
+      } else {
+        currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
+        currentTokens += paragraphTokens;
+      }
+    }
+
+    // Add the last chunk if it has content
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+    }
+
+    // If no chunks were created (edge case), force split by character count
+    if (chunks.length === 0) {
+      const chunkSize = Math.floor(maxTokens * 3.5); // Conservative character limit
+      for (let i = 0; i < content.length; i += chunkSize) {
+        chunks.push(content.slice(i, i + chunkSize));
+      }
+    }
+
+    console.log(`Content split into ${chunks.length} chunks for processing`);
+    return chunks;
+  }
+
+  // Process content in chunks and combine results
+  private async processContentInChunks<T>(
+    content: string,
+    processor: (chunk: string, isLast: boolean, chunkIndex: number) => Promise<T>,
+    combiner: (results: T[]) => T,
+    onProgress?: (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => void
+  ): Promise<T> {
+    const chunks = this.chunkContent(content);
+    
+    if (chunks.length === 1) {
+      onProgress?.({ step: 'Processing content...', percentage: 50, chunkIndex: 1, totalChunks: 1 });
+      const result = await processor(chunks[0], true, 0);
+      onProgress?.({ step: 'Processing complete', percentage: 100, chunkIndex: 1, totalChunks: 1 });
+      return result;
+    }
+
+    console.log(`Processing ${chunks.length} chunks...`);
+    const results: T[] = [];
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const progressPercentage = Math.round((i / chunks.length) * 80) + 10; // 10-90% range
+      
+      onProgress?.({ 
+        step: `Processing chunk ${i + 1} of ${chunks.length}...`, 
+        percentage: progressPercentage, 
+        chunkIndex: i + 1, 
+        totalChunks: chunks.length 
+      });
+      
+      try {
+        const result = await processor(chunks[i], isLast, i);
+        results.push(result);
+        console.log(`Processed chunk ${i + 1}/${chunks.length}`);
+      } catch (error) {
+        console.error(`Error processing chunk ${i + 1}:`, error);
+        // Continue with other chunks, but log the error
+      }
+    }
+
+    onProgress?.({ step: 'Combining results...', percentage: 95, chunkIndex: chunks.length, totalChunks: chunks.length });
+    const finalResult = combiner(results);
+    onProgress?.({ step: 'Processing complete', percentage: 100, chunkIndex: chunks.length, totalChunks: chunks.length });
+    
+    return finalResult;
+  }
+
+  async improveTypesetting(
+    request: TypesettingRequest, 
+    onProgress?: (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => void
+  ): Promise<TypesettingResponse> {
     // Check if Azure OpenAI is available
     if (!client || !hasAzureConfig) {
       console.log('Azure OpenAI not available, using fallback typesetting');
       return this.createFallbackTypesetting(request);
     }
+
+    // Use chunking for large content
+    return await this.processContentInChunks(
+      request.content,
+      async (chunk: string, isLast: boolean, chunkIndex: number) => {
+        const chunkRequest = { ...request, content: chunk };
+        return await this.processTypesettingChunk(chunkRequest, chunkIndex, isLast);
+      },
+      (results: TypesettingResponse[]) => this.combineTypesettingResults(results),
+      onProgress
+    );
+  }
+
+  private async processTypesettingChunk(
+    request: TypesettingRequest, 
+    chunkIndex: number, 
+    isLast: boolean
+  ): Promise<TypesettingResponse> {
 
     try {
       const response = await client!.chat.completions.create({
@@ -77,7 +196,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
             content: this.createTypesettingPrompt(request)
           }
         ],
-        max_tokens: 4000,
+        max_tokens: 9999,
         temperature: 0.1,
         response_format: {
           type: "json_schema",
@@ -205,6 +324,16 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
         h1, h2 { color: #2c3e50; }
         p { margin-bottom: 1.2em; }
       `;
+    } else if (request.documentType === 'calendar') {
+      css += `
+        h1 { text-align: center; color: #1e40af; margin-bottom: 1.5em; }
+        h2 { color: #374151; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5em; }
+        table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+        th, td { border: 1px solid #d1d5db; padding: 0.5em; text-align: center; }
+        th { background-color: #f3f4f6; font-weight: bold; }
+        .date { font-weight: bold; }
+        .event { font-style: italic; color: #6b7280; }
+      `;
     }
 
     return {
@@ -222,9 +351,38 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
   }
 
   private createTypesettingPrompt(request: TypesettingRequest): string {
+    let specificInstructions = '';
+    
+    if (request.documentType === 'calendar') {
+      specificInstructions = `
+For calendar documents, focus on:
+- Clear date formatting with proper visual hierarchy
+- Table layouts for calendar grids when appropriate
+- Consistent spacing and alignment for events
+- Color coding or visual distinction for different event types
+- Professional typography suitable for scheduling content
+- Easy-to-scan layout with clear date headers`;
+    } else if (request.documentType === 'academic') {
+      specificInstructions = `
+For academic documents, focus on:
+- Formal typography with proper citation styling
+- Clear section hierarchies
+- Professional margins and spacing
+- Scientific notation and formula formatting when present`;
+    } else if (request.documentType === 'business') {
+      specificInstructions = `
+For business documents, focus on:
+- Corporate-style formatting
+- Professional color scheme
+- Clear headings and bullet points
+- Executive summary styling when present`;
+    }
+
     return `Improve the formatting of this ${request.documentType} content for ${request.outputFormat}:
 
 ${request.content}
+
+${specificInstructions}
 
 Please provide:
 1. Enhanced HTML with proper semantic structure
@@ -264,27 +422,50 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
     }
   }
 
-  async generateContentStructure(rawContent: string): Promise<string> {
+  async generateContentStructure(
+    rawContent: string,
+    onProgress?: (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => void
+  ): Promise<string> {
     // Check if Azure OpenAI is available
     if (!client || !hasAzureConfig) {
       console.log('Azure OpenAI not available, using fallback content structure');
       return this.createBasicStructure(rawContent);
     }
 
+    // Use chunking for large content
+    return await this.processContentInChunks(
+      rawContent,
+      async (chunk: string, isLast: boolean, chunkIndex: number) => {
+        return await this.processContentStructureChunk(chunk, chunkIndex, isLast);
+      },
+      (results: string[]) => this.combineContentStructureResults(results),
+      onProgress
+    );
+  }
+
+  private async processContentStructureChunk(
+    content: string, 
+    chunkIndex: number, 
+    isLast: boolean
+  ): Promise<string> {
     try {
       const response = await client!.chat.completions.create({
         model: 'model-router',
         messages: [
           {
             role: 'system',
-            content: 'You are a content structure expert. Analyze unstructured content and create well-organized, hierarchical HTML structure with proper headings, sections, and semantic markup. IMPORTANT: You must respond with valid JSON only. Do not include any markdown formatting, explanations, or text outside the JSON structure. Ensure all strings are properly escaped.'
+            content: `You are a content structure expert. Analyze unstructured content and create well-organized, hierarchical HTML structure with proper headings, sections, and semantic markup. 
+
+${chunkIndex > 0 ? 'This is a continuation of a larger document. Maintain consistent heading hierarchy and structure.' : ''}
+
+IMPORTANT: You must respond with valid JSON only. Do not include any markdown formatting, explanations, or text outside the JSON structure. Ensure all strings are properly escaped.`
           },
           {
             role: 'user',
-            content: `Please structure this content with proper HTML semantics:\n\n${rawContent}`
+            content: `Please structure this content with proper HTML semantics${chunkIndex > 0 ? ' (continuation of larger document)' : ''}:\n\n${content}`
           }
         ],
-        max_tokens: 1500,
+        max_tokens: 9999,
         temperature: 0.2,
         response_format: {
           type: "json_schema",
@@ -327,41 +508,90 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
       } catch (parseError) {
         console.error('Failed to parse content structure response:', parseError);
         console.error('Raw response:', result);
-        throw new Error('Invalid JSON response from Azure OpenAI');
+        
+        // Fallback to basic structure for this chunk
+        return this.createBasicStructure(content);
       }
     } catch (error) {
-      console.error('Error generating content structure:', error);
-      // Fallback to basic HTML structure
-      return this.createBasicStructure(rawContent);
+      console.error('Error generating content structure for chunk:', error);
+      // Fallback to basic HTML structure for this chunk
+      return this.createBasicStructure(content);
     }
   }
 
-  private createBasicStructure(content: string): string {
-    // Split content into paragraphs and create basic HTML structure
-    const paragraphs = content.split('\n\n').filter(p => p.trim());
-    
-    // Try to identify potential headings (lines that are shorter and appear to be titles)
-    const structuredContent = paragraphs.map(paragraph => {
-      const trimmed = paragraph.trim();
-      
-      // Simple heuristic: if it's short and doesn't end with punctuation, it might be a heading
-      if (trimmed.length < 100 && !trimmed.match(/[.!?]$/)) {
-        return `<h2>${trimmed}</h2>`;
-      } else {
-        return `<p>${trimmed}</p>`;
-      }
-    });
+  private combineTypesettingResults(results: TypesettingResponse[]): TypesettingResponse {
+    if (results.length === 0) {
+      throw new Error('No typesetting results to combine');
+    }
 
+    if (results.length === 1) {
+      return results[0];
+    }
+
+    // Combine all formatted content
+    const combinedContent = results.map(result => result.formattedContent).join('\n\n');
+    
+    // Use the CSS from the first result (they should be similar for same document type)
+    const primaryStyling = results[0].styling;
+    
+    // Combine all suggestions and remove duplicates
+    const allSuggestions = results.flatMap(result => result.suggestions);
+    const uniqueSuggestions = [...new Set(allSuggestions)];
+    
+    // Add a note about chunked processing
+    uniqueSuggestions.push(`Content was processed in ${results.length} chunks due to size`);
+
+    return {
+      formattedContent: combinedContent,
+      styling: {
+        css: primaryStyling.css,
+        layout: `${primaryStyling.layout} (processed in ${results.length} chunks)`
+      },
+      suggestions: uniqueSuggestions
+    };
+  }
+
+  private combineContentStructureResults(results: string[]): string {
+    if (results.length === 0) {
+      return '<p>No content processed</p>';
+    }
+
+    if (results.length === 1) {
+      return results[0];
+    }
+
+    // Extract content from each structured result and combine
+    const combinedContent = results.map((result, index) => {
+      // Remove wrapping article/header/main tags if they exist, keep the inner content
+      let content = result;
+      
+      // Extract main content, removing outer wrappers
+      const mainMatch = content.match(/<main[^>]*>([\s\S]*?)<\/main>/);
+      if (mainMatch) {
+        content = mainMatch[1].trim();
+      } else {
+        // If no main tag, remove article and header wrappers
+        content = content
+          .replace(/<\/?article[^>]*>/g, '')
+          .replace(/<header[^>]*>[\s\S]*?<\/header>/g, '')
+          .replace(/<\/?main[^>]*>/g, '')
+          .trim();
+      }
+
+      return content;
+    }).filter(content => content.length > 0);
+
+    // Wrap the combined content in a proper structure
     return `
       <article>
         <header>
           <h1>Document</h1>
         </header>
         <main>
-          ${structuredContent.join('\n')}
+          ${combinedContent.join('\n\n')}
         </main>
       </article>
-    `;
+    `.trim();
   }
 
   private cleanJsonResponse(response: string): string {
@@ -432,6 +662,34 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
         text-align: justify;
       }
     `;
+  }
+
+  private createBasicStructure(content: string): string {
+    // Create a basic HTML structure from raw content
+    const paragraphs = content.split('\n\n').filter(p => p.trim());
+    
+    // Try to identify potential headings (lines that are shorter and might be titles)
+    const structuredContent = paragraphs.map(paragraph => {
+      const trimmed = paragraph.trim();
+      
+      // Simple heuristic for headings: short lines that don't end with punctuation
+      if (trimmed.length < 100 && !trimmed.endsWith('.') && !trimmed.endsWith('!') && !trimmed.endsWith('?') && !trimmed.includes('\n')) {
+        return `<h2>${trimmed}</h2>`;
+      } else {
+        return `<p>${trimmed}</p>`;
+      }
+    }).join('\n');
+
+    return `
+      <article>
+        <header>
+          <h1>Document</h1>
+        </header>
+        <main>
+          ${structuredContent}
+        </main>
+      </article>
+    `.trim();
   }
 }
 
