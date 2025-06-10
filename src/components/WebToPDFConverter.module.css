@@ -1,0 +1,246 @@
+/* Preview styles for Web2PDF Converter */
+.previewContent {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #2d3748;
+  background: white;
+  padding: 32px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  max-height: 500px;
+  overflow-y: auto;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.previewContent::-webkit-scrollbar {
+  width: 8px;
+}
+
+.previewContent::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.previewContent::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.previewContent::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.previewContent h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 24px 0;
+  color: #1a202c;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.previewContent h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 32px 0 16px 0;
+  color: #2d3748;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 8px;
+}
+
+.previewContent h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 24px 0 12px 0;
+  color: #2d3748;
+  line-height: 1.4;
+}
+
+.previewContent h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 10px 0;
+  color: #4a5568;
+  line-height: 1.4;
+}
+
+.previewContent p {
+  margin: 0 0 16px 0;
+  text-align: justify;
+  color: #4a5568;
+  hyphens: auto;
+  word-spacing: 0.1em;
+}
+
+.previewContent p:last-child {
+  margin-bottom: 0;
+}
+
+.previewContent ul,
+.previewContent ol {
+  margin: 0 0 16px 0;
+  padding-left: 32px;
+}
+
+.previewContent li {
+  margin: 0 0 8px 0;
+  line-height: 1.7;
+  color: #4a5568;
+}
+
+.previewContent li:last-child {
+  margin-bottom: 0;
+}
+
+.previewContent blockquote {
+  border-left: 4px solid #667eea;
+  margin: 24px 0;
+  padding: 16px 24px;
+  background: #f7fafc;
+  font-style: italic;
+  color: #4a5568;
+  border-radius: 0 8px 8px 0;
+}
+
+.previewContent code {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9em;
+  color: #e53e3e;
+}
+
+.previewContent pre {
+  background: #1a202c;
+  color: #e2e8f0;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.previewContent pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  border-radius: 0;
+}
+
+.previewContent table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 13px;
+}
+
+.previewContent th,
+.previewContent td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.previewContent th {
+  background: #f7fafc;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.previewContent a {
+  color: #667eea;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.previewContent a:hover {
+  border-bottom-color: #667eea;
+}
+
+.previewContent strong,
+.previewContent b {
+  font-weight: 700;
+  color: #2d3748;
+}
+
+.previewContent em,
+.previewContent i {
+  font-style: italic;
+}
+
+.previewContent img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 16px 0;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.previewContent hr {
+  border: none;
+  height: 2px;
+  background: linear-gradient(to right, #667eea, #764ba2);
+  margin: 32px 0;
+  border-radius: 1px;
+}
+
+.previewContent article {
+  margin: 0;
+}
+
+.previewContent header {
+  margin-bottom: 32px;
+  text-align: center;
+  border-bottom: 3px solid #667eea;
+  padding-bottom: 16px;
+}
+
+.previewContent main {
+  margin: 0;
+}
+
+.previewContent footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+  color: #718096;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Print-specific styles */
+@media print {
+  .previewContent {
+    box-shadow: none;
+    border: none;
+    padding: 0;
+    max-height: none;
+    overflow: visible;
+    background: white;
+  }
+  
+  .previewContent h1,
+  .previewContent h2,
+  .previewContent h3 {
+    page-break-after: avoid;
+  }
+  
+  .previewContent p,
+  .previewContent li {
+    orphans: 3;
+    widows: 3;
+  }
+  
+  .previewContent blockquote,
+  .previewContent pre,
+  .previewContent table {
+    page-break-inside: avoid;
+  }
+}
