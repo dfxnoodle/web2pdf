@@ -66,6 +66,7 @@ export interface RefinementRequest {
   websiteType?: 'landing' | 'blog' | 'portfolio' | 'documentation' | 'business' | 'personal';
   imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
   originalRequest?: any; // Store original generation parameters
+  specialRequirements?: string;
 }
 
 export interface RefinementResponse {
@@ -1064,6 +1065,7 @@ Guidelines:
     websiteType: string;
     imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
     styling?: any;
+    specialRequirements?: string;
   }): Promise<{html: string, css: string, suggestions: string[]}> {
     // Check if Azure OpenAI is available
     if (!client || !hasAzureConfig) {
@@ -1196,7 +1198,13 @@ ${request.content}
 
 WEBSITE TYPE: ${request.websiteType}
 
-REQUIREMENTS:
+${request.specialRequirements && request.specialRequirements.trim() ? 
+  `SPECIAL USER REQUIREMENTS:
+${request.specialRequirements.trim()}
+
+IMPORTANT: Please incorporate these special requirements into the website design, layout, functionality, and styling while maintaining best practices for responsive design and usability.
+
+` : ''}REQUIREMENTS:
 1. Extract the main theme/topic from the content
 2. Create appropriate titles and headers based on actual content
 3. Design a color scheme that matches the content's theme
@@ -1328,6 +1336,7 @@ IMPORTANT IMAGE INSTRUCTIONS:
     content: string;
     websiteType: string;
     imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
+    specialRequirements?: string;
   }): {html: string, css: string, suggestions: string[]} {
     // Analyze content to extract a meaningful title
     const lines = request.content.split('\n').filter(line => line.trim());
@@ -1632,7 +1641,11 @@ IMPORTANT IMAGE INSTRUCTIONS:
         'Images optimized with responsive grid layout and hover effects',
         'Typography scales smoothly across all device sizes',
         'Touch-friendly interface with appropriate tap targets',
-        'Print styles included for better document printing'
+        'Print styles included for better document printing',
+        ...(request.specialRequirements && request.specialRequirements.trim() ? 
+          [`Note: Special requirements provided but could not be fully incorporated in fallback mode: "${request.specialRequirements.trim()}"`] : 
+          []
+        )
       ]
     };
   }

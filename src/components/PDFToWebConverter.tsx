@@ -29,6 +29,9 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
   const [extractionStep, setExtractionStep] = useState('');
   const [extractionProgress, setExtractionProgress] = useState(0);
 
+  // Add new state for special requirements
+  const [specialRequirements, setSpecialRequirements] = useState('');
+
   // Add new state for refinement functionality
   const [isRefining, setIsRefining] = useState(false);
   const [showRefinementDialog, setShowRefinementDialog] = useState(false);
@@ -225,6 +228,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
         content: structuredContent,
         websiteType,
         imageDescriptions: getSelectedImageDescriptions(),
+        specialRequirements: specialRequirements.trim() || undefined,
         styling: {
           theme: 'modern',
           responsive: true,
@@ -513,6 +517,12 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
     }
   };
 
+  // Add function to open refinement dialog with clean state
+  const openRefinementDialog = () => {
+    setUserFeedback(''); // Reset feedback for new improvement session
+    setShowRefinementDialog(true);
+  };
+
   const resetToOriginal = () => {
     if (originalContent) {
       setGeneratedWebsite(originalContent);
@@ -647,6 +657,22 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
                 <option value="business" className="text-gray-800">🏢 Business Site</option>
                 <option value="personal" className="text-gray-800">👤 Personal Page</option>
               </select>
+            </div>
+
+            <div className="bg-white/80 backdrop-blur-md rounded-xl p-6 border border-gray-200">
+              <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <svg className="h-4 w-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Special Requirements (Optional)
+              </label>
+              <textarea
+                value={specialRequirements}
+                onChange={(e) => setSpecialRequirements(e.target.value)}
+                className="w-full h-24 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200 bg-white text-gray-900 resize-none"
+                placeholder="Example: Include a contact form, use dark theme, add testimonials section, make it mobile-first, include social media links..."
+              />
+              <p className="text-sm text-purple-600 mt-2">💡 Describe any specific features, styling preferences, or requirements for your website</p>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -1170,7 +1196,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
           <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/30 p-6">
             <div className="flex flex-wrap gap-4 justify-center">
               <button
-                onClick={() => setShowRefinementDialog(true)}
+                onClick={openRefinementDialog}
                 disabled={isRefining}
                 className="bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center gap-2"
               >

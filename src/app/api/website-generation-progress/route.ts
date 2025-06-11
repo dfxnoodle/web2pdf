@@ -3,13 +3,13 @@ import { azureOpenAIService } from '@/lib/azure-openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { content, websiteType, images, styling, imageDescriptions } = await request.json();
+    const { content, websiteType, images, styling, imageDescriptions, specialRequirements } = await request.json();
 
     if (!content?.trim()) {
       return NextResponse.json({ error: 'No content provided' }, { status: 400 });
     }
 
-    console.log('Website Generation - WebsiteType:', websiteType, 'Images count:', images?.length || 0, 'Image descriptions count:', imageDescriptions?.length || 0);
+    console.log('Website Generation - WebsiteType:', websiteType, 'Images count:', images?.length || 0, 'Image descriptions count:', imageDescriptions?.length || 0, 'Special requirements:', specialRequirements ? 'Yes' : 'No');
 
     // Create a streaming response
     const encoder = new TextEncoder();
@@ -69,7 +69,8 @@ export async function POST(request: NextRequest) {
             content,
             websiteType,
             imageDescriptions: imageDescriptions || [],
-            styling: styling || {}
+            styling: styling || {},
+            specialRequirements: specialRequirements
           };
 
           const websiteResult = await azureOpenAIService.generateCreativeWebsite(websiteRequest);

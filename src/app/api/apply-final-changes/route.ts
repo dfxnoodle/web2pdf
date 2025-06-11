@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream({
       start(controller) {
         // Progress callback function
-        const onProgress = (progress: { step: string; percentage: number; chunkIndex: number; totalChunks: number }) => {
+        const onProgress = (progress: { step: string; percentage: number }) => {
           const data = `data: ${JSON.stringify(progress)}\n\n`;
           controller.enqueue(encoder.encode(data));
         };
