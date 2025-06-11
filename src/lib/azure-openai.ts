@@ -807,6 +807,17 @@ Provide clean, well-structured text that preserves the document's organization a
 
   private cleanJsonResponse(response: string): string {
     try {
+      // First, validate the original response to understand what we're dealing with
+      const validation = this.validateJsonResponse(response);
+      if (validation.isValid) {
+        return response; // Response is already valid JSON
+      }
+
+      console.warn('JSON response validation failed:', validation.error);
+      if (validation.suggestion) {
+        console.warn('Suggestion:', validation.suggestion);
+      }
+
       // Remove any markdown code block markers
       let cleaned = response.replace(/```json\s*/g, '').replace(/```\s*/g, '');
       
@@ -818,32 +829,91 @@ Provide clean, well-structured text that preserves the document's organization a
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           cleaned = jsonMatch[0];
-        }
-      }
-      
-      // Check if JSON is truncated (doesn't end with })
-      if (!cleaned.endsWith('}')) {
-        console.warn('JSON response appears to be truncated');
-        // Try to find the last complete property and close the JSON
-        const lastCompleteProperty = cleaned.lastIndexOf('",');
-        if (lastCompleteProperty > -1) {
-          cleaned = cleaned.substring(0, lastCompleteProperty + 1) + '}}';
         } else {
-          // If we can't fix it, throw an error
-          throw new Error('Truncated JSON response cannot be repaired');
+          throw new Error('No valid JSON object found in response');
         }
       }
       
-      // Fix common escape issues in JSON strings
-      cleaned = cleaned.replace(/\n/g, '\\n');
-      cleaned = cleaned.replace(/\r/g, '\\r');
-      cleaned = cleaned.replace(/\t/g, '\\t');
+      // Handle truncated JSON more robustly
+      if (!cleaned.endsWith('}')) {
+        console.warn('JSON response appears to be truncated, attempting repair...');
+        cleaned = this.repairTruncatedJson(cleaned);
+      }
+      
+      // Try to parse and fix common string escaping issues
+      const finalValidation = this.validateJsonResponse(cleaned);
+      if (!finalValidation.isValid) {
+        console.warn('Attempting string sanitization...');
+        cleaned = this.sanitizeJsonStrings(cleaned);
+      }
+      
+      // Final validation
+      const lastValidation = this.validateJsonResponse(cleaned);
+      if (!lastValidation.isValid) {
+        throw new Error(`Unable to repair JSON: ${lastValidation.error}`);
+      }
       
       return cleaned;
     } catch (error) {
       console.error('Error cleaning JSON response:', error);
-      return response;
+      console.error('Original response length:', response.length);
+      console.error('Response preview:', response.substring(0, 500) + '...');
+      throw new Error(`JSON cleaning failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private repairTruncatedJson(json: string): string {
+    // Try to find the last complete string value and properly close the JSON
+    // Look for patterns like: "key": "value", or "key": ["value"], or "key": {...}
+    const patterns = [
+      /("[^"]*":\s*"[^"]*"),?\s*$/,  // String property
+      /("[^"]*":\s*\[[^\]]*\]),?\s*$/,  // Array property
+      /("[^"]*":\s*\{[^}]*\}),?\s*$/,  // Object property
+      /("[^"]*":\s*[^,}\]]*),?\s*$/   // Other values
+    ];
+    
+    let repaired = false;
+    let cleaned = json;
+    
+    for (const pattern of patterns) {
+      const match = cleaned.match(pattern);
+      if (match) {
+        const lastCompleteIndex = cleaned.lastIndexOf(match[1]);
+        if (lastCompleteIndex > -1) {
+          cleaned = cleaned.substring(0, lastCompleteIndex + match[1].length);
+          // Count opening braces to determine how many closing braces we need
+          const openBraces = (cleaned.match(/\{/g) || []).length;
+          const closeBraces = (cleaned.match(/\}/g) || []).length;
+          const missingBraces = openBraces - closeBraces;
+          cleaned += '}' + '}'.repeat(Math.max(0, missingBraces - 1));
+          repaired = true;
+          break;
+        }
+      }
+    }
+    
+    if (!repaired) {
+      throw new Error('Truncated JSON response cannot be repaired automatically');
+    }
+    
+    return cleaned;
+  }
+
+  private sanitizeJsonStrings(json: string): string {
+    // More sophisticated string sanitization that preserves JSON structure
+    return json.replace(/"([^"\\]*(\\.[^"\\]*)*)"/g, (match, content) => {
+      if (content) {
+        // Only escape if not already escaped and preserve existing escapes
+        const fixed = content
+          .replace(/(?<!\\)\n/g, '\\n')
+          .replace(/(?<!\\)\r/g, '\\r')
+          .replace(/(?<!\\)\t/g, '\\t')
+          .replace(/(?<!\\)"/g, '\\"')
+          .replace(/(?<!\\)\\/g, '\\\\'); // Escape lone backslashes
+        return `"${fixed}"`;
+      }
+      return match;
+    });
   }
 
   private createBasicCSS(request: TypesettingRequest): string {
@@ -932,6 +1002,39 @@ Provide clean, well-structured text that preserves the document's organization a
     if (!client || !hasAzureConfig) {
       console.log('Azure OpenAI not available, using fallback website generation');
       return this.createFallbackWebsite(request);
+    }
+
+    // Check if content is too large and should be chunked
+    if (this.shouldUseChunking(request.content)) {
+      console.log('Content too large, using chunking approach for website generation');
+      // For very large content, we'll need to chunk it and create a website based on the summary
+      const chunks = this.chunkContent(request.content, 8000); // Smaller chunks for website generation
+      
+      // Generate a summary of the content first
+      try {
+        const summaryResponse = await client!.chat.completions.create({
+          model: 'model-router',
+          messages: [{
+            role: 'user',
+            content: `Please summarize this content in 500-800 words, focusing on the main themes, key points, and overall purpose:\n\n${chunks[0]}\n\n${chunks.length > 1 ? '[Content continues with additional sections...]' : ''}`
+          }],
+          max_tokens: 1000,
+          temperature: 0.2
+        });
+
+        const summary = summaryResponse.choices[0]?.message?.content || 'Content analysis unavailable';
+        
+        // Create website based on summary
+        const summarizedRequest = {
+          ...request,
+          content: summary + '\n\n[Note: This website is based on a summary of larger content]'
+        };
+        
+        return this.generateCreativeWebsite(summarizedRequest);
+      } catch (error) {
+        console.error('Error generating summary for large content:', error);
+        return this.createFallbackWebsite(request);
+      }
     }
 
     try {
@@ -1026,7 +1129,7 @@ ${request.images && request.images.length > 0 ?
   'No images available'}`
           }
         ],
-        max_tokens: 12000,
+        max_tokens: this.calculateOptimalMaxTokens(request.content, 'creative'),
         temperature: 0.3,
         response_format: {
           type: "json_schema",
@@ -1085,7 +1188,29 @@ ${request.images && request.images.length > 0 ?
         };
       } catch (parseError) {
         console.error('Failed to parse creative website response:', parseError);
-        throw new Error('Invalid JSON response from Azure OpenAI');
+        console.error('Raw response length:', result.length);
+        console.error('Raw response preview:', result.substring(0, 1000));
+        
+        // Try to extract partial data using regex patterns
+        try {
+          const htmlMatch = result.match(/"html"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          const cssMatch = result.match(/"css"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          
+          if (htmlMatch && cssMatch) {
+            console.log('Using regex-extracted partial response');
+            return {
+              html: htmlMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t'),
+              css: cssMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t'),
+              suggestions: ['Response parsing failed, using regex extraction fallback']
+            };
+          }
+        } catch (extractError) {
+          console.error('Failed to extract partial data with regex:', extractError);
+        }
+        
+        // Final fallback - return fallback website
+        console.log('Using complete fallback website generation');
+        return this.createFallbackWebsite(request);
       }
     } catch (error) {
       console.error('Error generating creative website:', error);
@@ -1456,7 +1581,7 @@ ${request.contentType === 'pdf' ?
             content: this.createRefinementPrompt(request)
           }
         ],
-        max_tokens: 12000,
+        max_tokens: this.calculateOptimalMaxTokens(request.currentContent, 'refinement'),
         temperature: 0.2,
         response_format: {
           type: "json_schema",
@@ -1517,8 +1642,34 @@ ${request.contentType === 'pdf' ?
         return parsed;
       } catch (parseError) {
         console.error('Failed to parse refinement response:', parseError);
-        console.error('Raw response:', result);
-        throw new Error('Invalid JSON response from Azure OpenAI');
+        console.error('Raw response length:', result.length);
+        console.error('Raw response preview:', result.substring(0, 1000));
+        
+        // Try to extract partial data using regex patterns for refinement
+        try {
+          const contentMatch = result.match(/"refinedContent"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          const cssMatch = result.match(/"refinedCSS"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          const changesMatch = result.match(/"changes"\s*:\s*\[((?:[^\]\\]|\\.)*)\]/);
+          
+          if (contentMatch) {
+            console.log('Using regex-extracted partial refinement response');
+            const extractedContent = contentMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t');
+            
+            return {
+              refinedContent: extractedContent,
+              refinedCSS: cssMatch ? cssMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t') : (request.currentCSS || ''),
+              changes: changesMatch ? ['Partial changes applied from truncated response'] : ['Response parsing failed, minimal changes applied'],
+              suggestions: ['Response parsing failed, using regex extraction fallback'],
+              explanation: 'Response was partially parsed due to truncation or formatting issues'
+            } as RefinementResponse;
+          }
+        } catch (extractError) {
+          console.error('Failed to extract partial refinement data with regex:', extractError);
+        }
+        
+        // Final fallback
+        console.log('Using complete fallback refinement');
+        return this.createFallbackRefinement(request);
       }
     } catch (error) {
       console.error('Error calling Azure OpenAI for refinement:', error);
@@ -1640,6 +1791,83 @@ The content includes ${request.images.length} image(s). Please ensure any layout
       suggestions,
       explanation: 'Basic refinement applied due to AI service unavailability. Manual review and adjustment may be needed for optimal results.'
     };
+  }
+
+  private validateJsonResponse(response: string): { isValid: boolean; error?: string; suggestion?: string } {
+    try {
+      JSON.parse(response);
+      return { isValid: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Analyze the type of JSON error to provide better suggestions
+      if (errorMessage.includes('Unexpected end of JSON input')) {
+        return { 
+          isValid: false, 
+          error: 'JSON response was truncated', 
+          suggestion: 'Response likely exceeded token limit, try reducing content size or using chunking' 
+        };
+      } else if (errorMessage.includes('Unexpected token') || errorMessage.includes('Unexpected non-whitespace')) {
+        return { 
+          isValid: false, 
+          error: 'JSON contains invalid characters or formatting', 
+          suggestion: 'Response may contain unescaped characters or mixed content types' 
+        };
+      } else if (errorMessage.includes('Expected property name')) {
+        return { 
+          isValid: false, 
+          error: 'JSON structure is malformed', 
+          suggestion: 'Response may have been corrupted or partially generated' 
+        };
+      } else {
+        return { 
+          isValid: false, 
+          error: errorMessage, 
+          suggestion: 'Check response format and content' 
+        };
+      }
+    }
+  }
+
+  private sanitizeJsonString(str: string): string {
+    // Escape characters that commonly cause JSON parsing issues
+    return str
+      .replace(/\\/g, '\\\\')  // Escape backslashes first
+      .replace(/"/g, '\\"')    // Escape quotes
+      .replace(/\n/g, '\\n')   // Escape newlines
+      .replace(/\r/g, '\\r')   // Escape carriage returns
+      .replace(/\t/g, '\\t')   // Escape tabs
+      .replace(/\f/g, '\\f')   // Escape form feeds
+      .replace(/\b/g, '\\b');  // Escape backspaces
+  }
+
+  private calculateOptimalMaxTokens(inputContent: string, requestType: 'creative' | 'refinement' = 'creative'): number {
+    const inputTokens = this.estimateTokens(inputContent);
+    const systemPromptTokens = 1000; // Approximate system prompt size
+    const bufferTokens = 500; // Safety buffer
+    
+    // Azure OpenAI GPT-4 model has context limit of ~128k tokens
+    const contextLimit = 120000; // Leave some buffer
+    const baseOutputTokens = requestType === 'creative' ? 8000 : 6000;
+    
+    // Calculate available tokens for output
+    const availableTokens = contextLimit - inputTokens - systemPromptTokens - bufferTokens;
+    
+    // Ensure we don't exceed reasonable limits but also don't go too low
+    const maxTokens = Math.min(
+      Math.max(baseOutputTokens, availableTokens * 0.6), // Use 60% of available space
+      16000 // Cap at 16k tokens for output
+    );
+    
+    console.log(`Token calculation: input=${inputTokens}, available=${availableTokens}, max_tokens=${maxTokens}`);
+    
+    return Math.floor(maxTokens);
+  }
+
+  private shouldUseChunking(content: string): boolean {
+    const tokens = this.estimateTokens(content);
+    const threshold = 50000; // If content is over 50k tokens, use chunking
+    return tokens > threshold;
   }
 }
 

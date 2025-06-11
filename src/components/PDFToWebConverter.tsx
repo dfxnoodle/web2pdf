@@ -24,6 +24,25 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLIFrameElement>(null);
 
+  // Add new state for PDF extraction progress
+  const [extractionStep, setExtractionStep] = useState('');
+  const [extractionProgress, setExtractionProgress] = useState(0);
+
+  // Add new state for refinement functionality
+  const [isRefining, setIsRefining] = useState(false);
+  const [showRefinementDialog, setShowRefinementDialog] = useState(false);
+  const [userFeedback, setUserFeedback] = useState('');
+  const [refinementHistory, setRefinementHistory] = useState<Array<{
+    feedback: string;
+    changes: string[];
+    timestamp: Date;
+  }>>([]);
+  const [originalContent, setOriginalContent] = useState('');
+  const [originalCSS, setOriginalCSS] = useState('');
+
+  // Add state to track content updates for forcing re-renders
+  const [contentUpdateKey, setContentUpdateKey] = useState(0);
+
   // Helper functions for image selection
   const toggleImageSelection = (image: {data: string, type: string, description?: string}) => {
     setSelectedImages(prev => {
@@ -72,10 +91,21 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
 
     setIsExtracting(true);
     setError('');
+    setExtractionStep('Uploading PDF file...');
+    setExtractionProgress(10);
     
     try {
       const formData = new FormData();
       formData.append('pdf', selectedPDF);
+
+      // Add delay to show the upload progress
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      setExtractionStep('Processing PDF with AI Vision...');
+      setExtractionProgress(30);
+
+      // Add delay before making the request
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       const response = await fetch('/api/extract-pdf', {
         method: 'POST',
@@ -86,12 +116,35 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
         throw new Error('Failed to extract PDF content');
       }
 
+      setExtractionStep('Analyzing document structure...');
+      setExtractionProgress(70);
+
+      // Add delay before parsing response
+      await new Promise(resolve => setTimeout(resolve, 600));
+
       const result = await response.json();
+      
+      setExtractionStep('Finalizing extraction...');
+      setExtractionProgress(90);
+
+      // Add delay before setting results
+      await new Promise(resolve => setTimeout(resolve, 400));
+
       setExtractedContent(result.content);
       setExtractedImages(result.images || []);
       setSelectedImages([]); // Reset selected images when extracting new content
       setGeneratedWebsite(''); // Reset website content
       setSuggestions([]);
+      
+      setExtractionStep('Extraction complete!');
+      setExtractionProgress(100);
+
+      // Clear progress after delay
+      setTimeout(() => {
+        setExtractionStep('');
+        setExtractionProgress(0);
+      }, 2000);
+
     } catch (error) {
       console.error('Error extracting PDF:', error);
       setError('Failed to extract PDF content. Please try again.');
@@ -323,6 +376,162 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
     });
   };
 
+  // Add refinement functions
+  const handleRefineContent = async () => {
+    if (!userFeedback.trim()) {
+      setError('Please provide feedback about what you\'d like to improve.');
+      return;
+    }
+
+    if (!generatedWebsite && !extractedContent) {
+      setError('No website content available to refine. Please generate website first.');
+      return;
+    }
+
+    setIsRefining(true);
+    setError('');
+    setProcessingStep('Analyzing your feedback...');
+    setProcessingProgress(10);
+
+    // Store original content if this is the first refinement
+    if (!originalContent) {
+      setOriginalContent(generatedWebsite || extractedContent);
+      setOriginalCSS(websiteCSS);
+    }
+
+    try {
+      const refinementRequest = {
+        currentContent: generatedWebsite || extractedContent,
+        currentCSS: websiteCSS,
+        userFeedback,
+        contentType: 'website' as const,
+        websiteType,
+        images: selectedImages,
+        originalRequest: {
+          websiteType,
+          images: selectedImages
+        }
+      };
+
+      const refinementResult = await processWithServerSentEvents('/api/apply-final-changes', refinementRequest, (progress) => {
+        setProcessingStep(progress.step);
+        setProcessingProgress(progress.percentage);
+      });
+
+      // Apply the refinements
+      if (refinementResult.refinedContent) {
+        setGeneratedWebsite(refinementResult.refinedContent as string);
+      }
+      if (refinementResult.refinedCSS) {
+        setWebsiteCSS(refinementResult.refinedCSS as string);
+      }
+
+      // Force preview update
+      setContentUpdateKey(prev => prev + 1);
+
+      // Update suggestions with refinement suggestions
+      setSuggestions([
+        ...(Array.isArray(refinementResult.suggestions) ? refinementResult.suggestions : []),
+        `Applied changes: ${Array.isArray(refinementResult.changes) ? refinementResult.changes.join(', ') : 'General improvements'}`
+      ]);
+
+      // Add to refinement history
+      setRefinementHistory(prev => [...prev, {
+        feedback: userFeedback,
+        changes: Array.isArray(refinementResult.changes) ? refinementResult.changes : ['Applied improvements'],
+        timestamp: new Date()
+      }]);
+
+      // Clear feedback and close dialog
+      setUserFeedback('');
+      setShowRefinementDialog(false);
+
+      setProcessingStep('Refinement complete!');
+      setProcessingProgress(100);
+
+      // Clear progress after delay
+      setTimeout(() => {
+        setProcessingStep('');
+        setProcessingProgress(0);
+      }, 2000);
+
+    } catch (error) {
+      console.error('Error refining content:', error);
+      setError(`Failed to refine content: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  const resetToOriginal = () => {
+    if (originalContent) {
+      setGeneratedWebsite(originalContent);
+      setWebsiteCSS(originalCSS);
+      setRefinementHistory([]);
+      setSuggestions(['Reverted to original content']);
+      // Force preview update
+      setContentUpdateKey(prev => prev + 1);
+    }
+  };
+
+  const openFullSizePreview = () => {
+    if (!generatedWebsite) return;
+
+    // Create a complete HTML document
+    const fullHTML = `
+      <!DOCTYPE html>
+      <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>PDF to Website Preview - ${selectedPDF?.name || 'Generated Website'}</title>
+          <style>
+            ${websiteCSS}
+            
+            /* Additional responsive styles */
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              line-height: 1.6;
+              color: #333;
+              background: #fff;
+            }
+            
+            @media (max-width: 768px) {
+              body { font-size: 14px; }
+              .container { padding: 0 1rem; }
+            }
+          </style>
+        </head>
+        <body>
+          ${generatedWebsite}
+        </body>
+      </html>
+    `;
+
+    // Create a blob URL and open in new tab
+    const blob = new Blob([fullHTML], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    
+    // Open in new tab
+    const newTab = window.open(url, '_blank');
+    
+    // Clean up the blob URL after a short delay to allow the tab to load
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
+    
+    // Optional: Focus the new tab if popup blockers don't prevent it
+    if (newTab) {
+      newTab.focus();
+    }
+  };
+  
   return (
     <div className="relative">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -438,6 +647,33 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
                 )}
               </button>
             </div>
+
+            {/* PDF Extraction Progress Indicator */}
+            {isExtracting && extractionStep && (
+              <div className="p-6 bg-orange-50/90 backdrop-blur-md border-2 border-orange-200 rounded-xl">
+                <div className="flex items-center gap-4">
+                  <div className="flex-shrink-0">
+                    <svg className="animate-spin h-8 w-8 text-orange-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 818-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="text-lg font-semibold text-orange-800">PDF Extraction in Progress</h3>
+                      <span className="text-lg font-bold text-orange-600">{extractionProgress}%</span>
+                    </div>
+                    <p className="text-orange-700 mb-3">{extractionStep}</p>
+                    <div className="w-full bg-orange-200 rounded-full h-3 shadow-inner">
+                      <div 
+                        className="bg-gradient-to-r from-orange-500 to-red-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm" 
+                        style={{width: `${extractionProgress}%`}}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Progress Indicator */}
             {isProcessing && processingStep && (
@@ -609,15 +845,27 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
             )}
           </div>
 
-          {/* Preview Section */}
           <div className="space-y-6">
             <div className="bg-white/90 backdrop-blur-md rounded-xl p-6 border border-gray-200">
-              <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-3">
-                <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9m0 9c-5 0-9-4-9-9s4-9 9-9" />
-                </svg>
-                Website Preview
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-semibold text-gray-800 flex items-center gap-3">
+                  <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9m0 9c-5 0-9-4-9-9s4-9 9-9" />
+                  </svg>
+                  Website Preview
+                </h2>
+                {generatedWebsite && (
+                  <button
+                    onClick={openFullSizePreview}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 text-sm font-medium"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    Open in New Tab
+                  </button>
+                )}
+              </div>
               
               <div className="border-2 border-gray-300 rounded-lg min-h-[500px] max-h-[700px] overflow-hidden shadow-inner bg-white">
                 {generatedWebsite ? (
@@ -671,6 +919,117 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
             )}
           </div>
         </div>
+
+        {/* Refinement Dialog */}
+        {showRefinementDialog && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Improve Your Website
+                  </h3>
+                  <button
+                    onClick={() => setShowRefinementDialog(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      What would you like to improve? Be specific about your requirements:
+                    </label>
+                    <textarea
+                      value={userFeedback}
+                      onChange={(e) => setUserFeedback(e.target.value)}
+                      className="w-full h-32 p-4 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 resize-none"
+                      placeholder="Example: Make the fonts larger, change the color scheme to blue, add more spacing between sections, improve the layout for better readability..."
+                    />
+                  </div>
+
+                  {/* Refinement History */}
+                  {refinementHistory.length > 0 && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">Previous Improvements:</h4>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {refinementHistory.map((entry, index) => (
+                          <div key={index} className="text-sm">
+                            <p className="text-gray-600 italic">&ldquo;{entry.feedback}&rdquo;</p>
+                            <p className="text-green-600 text-xs mt-1">
+                              Applied: {entry.changes.join(', ')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      onClick={handleRefineContent}
+                      disabled={isRefining || !userFeedback.trim()}
+                      className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                    >
+                      {isRefining ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Improving...
+                        </span>
+                      ) : (
+                        'Apply Improvements'
+                      )}
+                    </button>
+                    
+                    {originalContent && (
+                      <button
+                        onClick={resetToOriginal}
+                        className="px-4 py-3 text-gray-600 hover:text-gray-800 font-medium transition-colors"
+                      >
+                        Reset to Original
+                      </button>
+                    )}
+                    
+                    <button
+                      onClick={() => setShowRefinementDialog(false)}
+                      className="px-4 py-3 text-gray-600 hover:text-gray-800 font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add refinement button to the action buttons */}
+        {generatedWebsite && (
+          <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/30 p-6">
+            <div className="flex flex-wrap gap-4 justify-center">
+              <button
+                onClick={() => setShowRefinementDialog(true)}
+                disabled={isRefining}
+                className="bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center gap-2"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Improve the Website
+              </button>
+            </div>
+          </div>
+        )}
         </div>
       </div>
     </div>
