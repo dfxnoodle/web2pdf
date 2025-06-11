@@ -21,6 +21,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
   const [error, setError] = useState('');
   const [extractedImages, setExtractedImages] = useState<Array<{data: string, type: string, description?: string}>>([]);
   const [selectedImages, setSelectedImages] = useState<Array<{data: string, type: string, description?: string}>>([]);
+  const [imageDescriptions, setImageDescriptions] = useState<Array<{id: string, description: string, page: number, imageUrl: string}>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLIFrameElement>(null);
 
@@ -39,9 +40,6 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
   }>>([]);
   const [originalContent, setOriginalContent] = useState('');
   const [originalCSS, setOriginalCSS] = useState('');
-
-  // Add state to track content updates for forcing re-renders
-  const [contentUpdateKey, setContentUpdateKey] = useState(0);
 
   // Helper functions for image selection
   const toggleImageSelection = (image: {data: string, type: string, description?: string}) => {
@@ -67,6 +65,24 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
     return selectedImages.some(img => img.data === image.data);
   };
 
+  // Helper functions for image descriptions
+  const updateImageUrl = (id: string, imageUrl: string) => {
+    setImageDescriptions(prev => 
+      prev.map(desc => 
+        desc.id === id ? { ...desc, imageUrl } : desc
+      )
+    );
+  };
+
+  const getImageUrl = (id: string) => {
+    const desc = imageDescriptions.find(d => d.id === id);
+    return desc?.imageUrl || '';
+  };
+
+  const getSelectedImageDescriptions = () => {
+    return imageDescriptions.filter(desc => desc.imageUrl.trim() !== '');
+  };
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file && file.type === 'application/pdf') {
@@ -76,6 +92,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       setWebsiteCSS('');
       setExtractedImages([]);
       setSelectedImages([]);
+      setImageDescriptions([]);
       setSuggestions([]);
       setError('');
     } else {
@@ -131,8 +148,28 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       await new Promise(resolve => setTimeout(resolve, 400));
 
       setExtractedContent(result.content);
-      setExtractedImages(result.images || []);
       setSelectedImages([]); // Reset selected images when extracting new content
+      
+      // Handle image descriptions from the API - the API now returns descriptions directly
+      if (Array.isArray(result.images)) {
+        const descriptions = result.images.map((desc: {
+          id: string;
+          description: string;
+          page: number;
+          imageUrl?: string;
+        }) => ({
+          id: desc.id,
+          description: desc.description,
+          page: desc.page,
+          imageUrl: desc.imageUrl || '' // Initialize with empty URL or existing URL
+        }));
+        setImageDescriptions(descriptions);
+        setExtractedImages([]); // Clear old format images
+      } else {
+        setImageDescriptions([]);
+        setExtractedImages([]);
+      }
+      
       setGeneratedWebsite(''); // Reset website content
       setSuggestions([]);
       
@@ -172,7 +209,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       const structuredContent = await processWithServerSentEvents('/api/pdf-analysis-progress', {
         content: extractedContent,
         websiteType,
-        images: selectedImages
+        imageDescriptions: getSelectedImageDescriptions()
       }, (progress) => {
         setProcessingStep(progress.step);
         // Map content analysis progress to 15-50% range
@@ -187,7 +224,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       const websiteRequest = {
         content: structuredContent,
         websiteType,
-        images: selectedImages,
+        imageDescriptions: getSelectedImageDescriptions(),
         styling: {
           theme: 'modern',
           responsive: true,
@@ -300,6 +337,13 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
     return new Promise((resolve, reject) => {
       let result: Record<string, unknown> | null = null;
 
+      // Timeout fallback
+      const timeoutId = setTimeout(() => {
+        if (result === null) {
+          reject(new Error('Request timeout - Server response took longer than expected'));
+        }
+      }, 300000); // 5 minute timeout
+
       // Make the actual request
       fetch(endpoint, {
         method: 'POST',
@@ -314,6 +358,7 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
         
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
+        let buffer = ''; // Buffer to accumulate incomplete data
 
         const readStream = async () => {
           try {
@@ -322,22 +367,35 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
               if (done) break;
 
               const chunk = decoder.decode(value, { stream: true });
-              const lines = chunk.split('\n');
+              buffer += chunk;
+              
+              // Process complete lines from the buffer
+              const lines = buffer.split('\n');
+              // Keep the last incomplete line in the buffer
+              buffer = lines.pop() || '';
 
               for (const line of lines) {
                 if (line.startsWith('data: ')) {
+                  const jsonString = line.slice(6).trim();
+                  
+                  // Skip empty data lines
+                  if (!jsonString) continue;
+                  
                   try {
-                    const data = JSON.parse(line.slice(6));
+                    const data = JSON.parse(jsonString);
                     
                     if (data.type === 'complete') {
                       result = data.result || data;
                       if (result) {
+                        clearTimeout(timeoutId);
                         resolve(result);
                       } else {
+                        clearTimeout(timeoutId);
                         reject(new Error('No result received'));
                       }
                       return;
                     } else if (data.type === 'error') {
+                      clearTimeout(timeoutId);
                       reject(new Error(data.error));
                       return;
                     } else {
@@ -350,7 +408,9 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
                       });
                     }
                   } catch (parseError) {
-                    console.warn('Failed to parse SSE data:', parseError);
+                    console.warn('Failed to parse SSE data:', parseError, 'Raw data:', jsonString.substring(0, 100) + '...');
+                    // Don't process this line further if it can't be parsed
+                    continue;
                   }
                 }
               }
@@ -366,13 +426,6 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
         console.error('Fetch error:', error);
         reject(error);
       });
-
-      // Timeout fallback
-      setTimeout(() => {
-        if (result === null) {
-          reject(new Error('Request timeout'));
-        }
-      }, 300000); // 5 minute timeout
     });
   };
 
@@ -406,10 +459,10 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
         userFeedback,
         contentType: 'website' as const,
         websiteType,
-        images: selectedImages,
+        imageDescriptions: getSelectedImageDescriptions(),
         originalRequest: {
           websiteType,
-          images: selectedImages
+          imageDescriptions: getSelectedImageDescriptions()
         }
       };
 
@@ -425,9 +478,6 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       if (refinementResult.refinedCSS) {
         setWebsiteCSS(refinementResult.refinedCSS as string);
       }
-
-      // Force preview update
-      setContentUpdateKey(prev => prev + 1);
 
       // Update suggestions with refinement suggestions
       setSuggestions([
@@ -469,8 +519,6 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
       setWebsiteCSS(originalCSS);
       setRefinementHistory([]);
       setSuggestions(['Reverted to original content']);
-      // Force preview update
-      setContentUpdateKey(prev => prev + 1);
     }
   };
 
@@ -754,7 +802,111 @@ export default function PDFToWebConverter({ onWebsiteGenerated }: PDFToWebConver
               </div>
             )}
 
-            {/* Image Selection Interface */}
+            {/* Image Descriptions Interface */}
+            {imageDescriptions.length > 0 && (
+              <div className="bg-blue-50/90 backdrop-blur-md rounded-xl p-6 border border-blue-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-blue-800 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Image Descriptions ({getSelectedImageDescriptions().length}/{imageDescriptions.length} with URLs)
+                  </h3>
+                  <div className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                    {imageDescriptions.length} image{imageDescriptions.length !== 1 ? 's' : ''} found
+                  </div>
+                </div>
+
+                <div className="space-y-4 max-h-80 overflow-y-auto">
+                  {imageDescriptions.map((desc) => {
+                    const hasUrl = desc.imageUrl.trim() !== '';
+                    
+                    return (
+                      <div
+                        key={desc.id}
+                        className={`p-4 rounded-lg border-2 transition-all ${
+                          hasUrl 
+                            ? 'border-green-300 bg-green-50' 
+                            : 'border-gray-200 bg-white hover:border-blue-300'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                Page {desc.page}
+                              </span>
+                              <span className="text-xs text-gray-400">
+                                ID: {desc.id}
+                              </span>
+                              {hasUrl && (
+                                <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                  </svg>
+                                  URL Set
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-700 font-medium mb-2">
+                              {desc.description}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium text-gray-600">
+                            Image URL (local or remote):
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={getImageUrl(desc.id)}
+                              onChange={(e) => updateImageUrl(desc.id, e.target.value)}
+                              placeholder="https://example.com/image.jpg or /local/image.png"
+                              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            {hasUrl && (
+                              <button
+                                onClick={() => window.open(desc.imageUrl, '_blank')}
+                                className="px-3 py-2 text-xs text-blue-600 hover:text-blue-800 border border-blue-300 rounded-lg hover:bg-blue-50 transition-colors"
+                                title="Preview image"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            💡 Tip: Use image URLs that will be accessible when the website is viewed. Local paths should be relative to your website root.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Summary */}
+                <div className="mt-4 pt-4 border-t border-blue-200">
+                  <div className="flex items-center justify-between text-sm text-blue-700">
+                    <span>
+                      {getSelectedImageDescriptions().length} image{getSelectedImageDescriptions().length !== 1 ? 's' : ''} will be included in website generation
+                    </span>
+                    {getSelectedImageDescriptions().length > 0 && (
+                      <span className="text-xs text-green-600 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Ready for AI generation
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Legacy Image Selection Interface - Keep for backward compatibility if needed */}
             {extractedImages.length > 0 && (
               <div className="bg-blue-50/90 backdrop-blur-md rounded-xl p-6 border border-blue-200">
                 <div className="flex items-center justify-between mb-4">

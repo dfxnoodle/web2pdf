@@ -32,7 +32,7 @@ export interface TypesettingRequest {
   content: string;
   documentType: 'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar';
   outputFormat: 'pdf' | 'html';
-  images?: Array<{src: string, alt: string}>; // Add image support
+  imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>; // Updated image support
   screenshot?: string; // Add screenshot support
   styling?: {
     fontSize?: number;
@@ -64,7 +64,7 @@ export interface RefinementRequest {
   contentType: 'pdf' | 'website';
   documentType?: 'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar';
   websiteType?: 'landing' | 'blog' | 'portfolio' | 'documentation' | 'business' | 'personal';
-  images?: Array<{data?: string, src?: string, type?: string, alt?: string, description?: string}>;
+  imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
   originalRequest?: any; // Store original generation parameters
 }
 
@@ -402,10 +402,10 @@ For business documents, focus on:
 
     // Add image handling instructions
     let imageInstructions = '';
-    if (request.images && request.images.length > 0) {
+    if (request.imageDescriptions && request.imageDescriptions.length > 0) {
       imageInstructions += `\n\nImages to include in the document:\n`;
-      request.images.forEach((img, index) => {
-        imageInstructions += `${index + 1}. ${img.src} (${img.alt || 'No description'})\n`;
+      request.imageDescriptions.forEach((imageDesc, index) => {
+        imageInstructions += `${index + 1}. ${imageDesc.imageUrl || '[No URL provided]'} (${imageDesc.description})\n`;
       });
       imageInstructions += '\nInstructions for images:\n- Use server-side image processing to avoid CORS issues\n- Include images with proper styling and captions\n- Ensure images are responsive and print-friendly\n- Position images contextually within the content';
     }
@@ -582,7 +582,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
   }
 
   // OpenAI Vision API for PDF content extraction using image files
-  async analyzePdfWithVision(buffer: Buffer, filename: string): Promise<{text: string, pageCount: number}> {
+  async analyzePdfWithVision(buffer: Buffer, filename: string): Promise<{text: string, pageCount: number, imageDescriptions: Array<{id: string, description: string, page: number}>}> {
     if (!client || !hasAzureConfig) {
       throw new Error('Azure OpenAI not configured for Vision API')
     }
@@ -644,6 +644,7 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
       
       // Analyze each page with Vision API using image files directly
       let allExtractedText = ''
+      let allImageDescriptions: Array<{id: string, description: string, page: number}> = []
       
       for (let i = 0; i < convertedPages.length; i++) {
         const imagePath = convertedPages[i]
@@ -654,12 +655,13 @@ IMPORTANT: You must respond with valid JSON only. Do not include any markdown fo
           const imageBuffer = fs.readFileSync(imagePath)
           const imageBase64 = imageBuffer.toString('base64')
           
-          const response = await client.chat.completions.create({
-            model: 'gpt-4o', // Use specific Vision model
+          // First, extract text content without image descriptions
+          const textResponse = await client.chat.completions.create({
+            model: 'gpt-4o',
             messages: [
               {
                 role: 'system',
-                content: `You are an expert document analysis AI. Extract all visible text from this page image and describe any visual elements.
+                content: `You are an expert document analysis AI. Extract ONLY the visible text from this page image. Do NOT include image descriptions.
 
 Instructions:
 1. Read and transcribe ALL visible text accurately
@@ -669,19 +671,16 @@ Instructions:
 5. For tables, format them in a readable way
 6. Ignore watermarks or decorative elements
 7. If this is page ${i + 1} of a multi-page document, start with "=== Page ${i + 1} ===" 
-8. **IMPORTANT**: Describe any images, charts, diagrams, graphs, or visual elements present
-9. For images/visuals, include descriptions like: "[IMAGE: Description of what is shown in the image]"
-10. For charts/graphs, describe the type and key data points: "[CHART: Bar chart showing sales data for Q1-Q4]"
-11. For diagrams, explain what they illustrate: "[DIAGRAM: Flow chart showing the process steps]"
+8. ONLY extract text - do not describe images, charts, diagrams, or visual elements
 
-Provide clean, well-structured text that preserves the document's organization and includes descriptions of all visual content that would help in website generation.`
+Provide clean, well-structured text that preserves the document's organization.`
               },
               {
                 role: 'user',
                 content: [
                   {
                     type: 'text',
-                    text: `Extract all text and describe all visual elements from page ${i + 1} of "${filename}". Include detailed descriptions of images, charts, diagrams, and other visual content that would be useful for creating a website.`
+                    text: `Extract only the text content from page ${i + 1} of "${filename}". Do not describe any visual elements.`
                   },
                   {
                     type: 'image_url',
@@ -692,15 +691,81 @@ Provide clean, well-structured text that preserves the document's organization a
                 ]
               }
             ],
-            max_tokens: 2000, // Increased limit to accommodate image descriptions
+            max_tokens: 1500,
             temperature: 0.1
           })
 
-          const pageText = response.choices?.[0]?.message?.content
+          // Second, extract image descriptions separately
+          const imageResponse = await client.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+              {
+                role: 'system',
+                content: `You are an expert at identifying and describing visual elements in documents. Your task is to identify and describe ONLY the images, charts, diagrams, graphs, and visual elements.
+
+Return your response as a JSON array of objects with this format:
+[
+  {
+    "id": "image_page${i + 1}_1",
+    "description": "A detailed description of the visual element"
+  },
+  {
+    "id": "image_page${i + 1}_2", 
+    "description": "Another visual element description"
+  }
+]
+
+Guidelines:
+- Only describe actual images, charts, diagrams, graphs, logos, or visual content
+- Do NOT describe text elements, headers, or paragraphs
+- Provide detailed, useful descriptions for website generation
+- If no visual elements exist, return an empty array: []
+- Each description should be detailed enough to help someone find or create a suitable replacement image`
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Identify and describe all visual elements (images, charts, diagrams, graphs) from page ${i + 1} of "${filename}". Return as JSON array.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:image/png;base64,${imageBase64}`
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 1000,
+            temperature: 0.1
+          })
+
+          const pageText = textResponse.choices?.[0]?.message?.content
           if (pageText) {
             allExtractedText += pageText + '\n\n'
-            console.log(`Extracted ${pageText.length} characters (text + image descriptions) from page ${i + 1}`)
+            console.log(`Extracted ${pageText.length} characters of text from page ${i + 1}`)
           }
+
+          const imageDescriptionsText = imageResponse.choices?.[0]?.message?.content
+          if (imageDescriptionsText) {
+            try {
+              const pageImageDescriptions = JSON.parse(imageDescriptionsText.trim())
+              if (Array.isArray(pageImageDescriptions)) {
+                const processedDescriptions = pageImageDescriptions.map((desc: any) => ({
+                  id: desc.id || `image_page${i + 1}_${Date.now()}`,
+                  description: desc.description || 'Visual element',
+                  page: i + 1
+                }))
+                allImageDescriptions.push(...processedDescriptions)
+                console.log(`Extracted ${processedDescriptions.length} image descriptions from page ${i + 1}`)
+              }
+            } catch (parseError) {
+              console.warn(`Failed to parse image descriptions from page ${i + 1}:`, parseError)
+            }
+          }
+
         } catch (pageError) {
           console.error(`Error analyzing page ${i + 1}:`, pageError)
           allExtractedText += `\n=== Page ${i + 1} (Analysis Failed) ===\n[Content could not be extracted from this page]\n\n`
@@ -719,10 +784,12 @@ Provide clean, well-structured text that preserves the document's organization a
       }
 
       console.log(`Total extracted text length: ${allExtractedText.length} characters`)
+      console.log(`Total image descriptions found: ${allImageDescriptions.length}`)
       
       return {
         text: allExtractedText.trim(),
-        pageCount: convertedPages.length
+        pageCount: convertedPages.length,
+        imageDescriptions: allImageDescriptions
       }
     } catch (error) {
       console.error('Vision API analysis failed:', error)
@@ -995,7 +1062,7 @@ Provide clean, well-structured text that preserves the document's organization a
   async generateCreativeWebsite(request: {
     content: string;
     websiteType: string;
-    images?: Array<{data: string, type: string, description?: string}>;
+    imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
     styling?: any;
   }): Promise<{html: string, css: string, suggestions: string[]}> {
     // Check if Azure OpenAI is available
@@ -1074,12 +1141,36 @@ MODERN CSS FEATURES TO USE:
 - Box shadows and modern visual effects
 - Responsive images with object-fit
 
+REQUIRED CSS FOR IMAGES:
+.responsive-image, .content-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  margin: 1rem 0;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .responsive-image, .content-image {
+    margin: 0.5rem 0;
+  }
+}
+
 CONTENT ANALYSIS FOCUS:
 - What is the main topic/theme of this content?
 - What type of organization/person/event does this relate to?
 - What are the key sections and information hierarchy?
 - What design style would best represent this content?
 - What colors, fonts, and layout would be most appropriate?
+
+IMAGE HANDLING RULES:
+- If images are provided with URLs, include them directly in HTML using <img> tags
+- DO NOT use placeholder text like [IMAGE_1], [IMAGE_2] etc.
+- Only include images that have valid URLs provided
+- Add proper alt text and responsive CSS for all images
+- Images should enhance content, not be decorative
+- Never duplicate or repeat the same image multiple times
 
 OUTPUT REQUIREMENTS:
 - Respond with valid JSON only
@@ -1124,9 +1215,23 @@ RESPONSIVE DESIGN FOCUS:
 - Use clamp() for fluid typography
 - Implement proper image optimization and responsive loading
 
-${request.images && request.images.length > 0 ? 
-  `IMAGES AVAILABLE: ${request.images.length} images that should be incorporated into the design` : 
-  'No images available'}`
+${request.imageDescriptions && request.imageDescriptions.length > 0 ? 
+  `IMAGES AVAILABLE FOR INCORPORATION:
+${request.imageDescriptions
+  .filter(img => img.imageUrl && img.imageUrl.trim() !== '') // Only include images with URLs
+  .map((img, index) => `- Image ${index + 1}: "${img.description}" from Page ${img.page}
+  URL: ${img.imageUrl}
+  HTML: <img src="${img.imageUrl}" alt="${img.description}" class="content-image responsive-image" loading="lazy">`)
+  .join('\n\n')}
+
+IMPORTANT IMAGE INSTRUCTIONS:
+- Use the exact <img> tags provided above for each image
+- Place images contextually where they enhance the content
+- Images are already responsive with the "responsive-image" class
+- Add CSS for .responsive-image class (max-width: 100%, height: auto)
+- Only use the images listed above - do not create additional image tags
+- Each image should appear only ONCE in the website` : 
+  'NO IMAGES AVAILABLE - Do not include any image tags or placeholders'}`
           }
         ],
         max_tokens: this.calculateOptimalMaxTokens(request.content, 'creative'),
@@ -1145,7 +1250,7 @@ ${request.images && request.images.length > 0 ?
                 },
                 css: {
                   type: "string", 
-                  description: "Comprehensive CSS with theme-appropriate styling"
+                  description: "Comprehensive CSS with theme-appropriate styling and responsive image classes (.responsive-image, .content-image)"
                 },
                 suggestions: {
                   type: "array",
@@ -1171,18 +1276,18 @@ ${request.images && request.images.length > 0 ?
         const cleanedResult = this.cleanJsonResponse(result);
         const parsed = JSON.parse(cleanedResult);
         
-        // Process images if available
-        let processedHtml = parsed.html;
-        if (request.images && request.images.length > 0) {
-          request.images.forEach((image, index) => {
-            const placeholder = `[IMAGE_${index + 1}]`;
-            const imgTag = `<img src="data:${image.type};base64,${image.data}" alt="${image.description || `Image ${index + 1}`}" class="content-image">`;
-            processedHtml = processedHtml.replace(new RegExp(placeholder, 'g'), imgTag);
-          });
+        // Log image information for debugging
+        if (request.imageDescriptions) {
+          console.log(`Website generation - ${request.imageDescriptions.length} image descriptions provided`);
+          const validImages = request.imageDescriptions.filter(img => img.imageUrl && img.imageUrl.trim() !== '');
+          console.log(`Website generation - ${validImages.length} images have valid URLs`);
         }
         
+        // Note: Images should now be directly included in the HTML by the AI
+        // The AI is instructed to include <img> tags directly, not placeholders
+        
         return {
-          html: processedHtml,
+          html: parsed.html,
           css: parsed.css,
           suggestions: parsed.suggestions
         };
@@ -1222,7 +1327,7 @@ ${request.images && request.images.length > 0 ?
   private createFallbackWebsite(request: {
     content: string;
     websiteType: string;
-    images?: Array<{data: string, type: string, description?: string}>;
+    imageDescriptions?: Array<{id: string, description: string, page: number, imageUrl?: string}>;
   }): {html: string, css: string, suggestions: string[]} {
     // Analyze content to extract a meaningful title
     const lines = request.content.split('\n').filter(line => line.trim());
@@ -1245,14 +1350,24 @@ ${request.images && request.images.length > 0 ?
       }
     }).join('\n');
 
-    // Include images
+    // Include images (with deduplication and validation)
     let imageContent = '';
-    if (request.images && request.images.length > 0) {
-      imageContent = '<div class="image-gallery">';
-      request.images.forEach((image, index) => {
-        imageContent += `<img src="data:${image.type};base64,${image.data}" alt="${image.description || `Image ${index + 1}`}" class="gallery-image">`;
-      });
-      imageContent += '</div>';
+    if (request.imageDescriptions && request.imageDescriptions.length > 0) {
+      const validImages = request.imageDescriptions.filter(
+        (img, index, arr) => 
+          img.imageUrl && 
+          img.imageUrl.trim() !== '' && 
+          // Deduplicate by URL
+          arr.findIndex(i => i.imageUrl === img.imageUrl) === index
+      );
+      
+      if (validImages.length > 0) {
+        imageContent = '<div class="image-gallery">';
+        validImages.forEach((imageDesc) => {
+          imageContent += `<img src="${imageDesc.imageUrl}" alt="${imageDesc.description}" class="gallery-image responsive-image" loading="lazy">`;
+        });
+        imageContent += '</div>';
+      }
     }
 
     const html = `
@@ -1369,16 +1484,19 @@ ${request.images && request.images.length > 0 ?
         margin: clamp(2rem, 5vw, 3rem) 0;
       }
 
-      .gallery-image {
+      .gallery-image, .responsive-image, .content-image {
         width: 100%;
         height: auto;
         border-radius: var(--border-radius);
         box-shadow: var(--shadow);
         transition: var(--transition);
         object-fit: cover;
+        max-width: 100%;
+        display: block;
+        margin: 1rem 0;
       }
 
-      .gallery-image:hover {
+      .gallery-image:hover, .responsive-image:hover, .content-image:hover {
         transform: translateY(-4px);
         box-shadow: 0 12px 32px rgba(0,0,0,0.15);
       }
@@ -1709,9 +1827,9 @@ Please provide:
 5. Clear explanation of the refinement rationale`;
 
     // Add image context if available
-    if (request.images && request.images.length > 0) {
+    if (request.imageDescriptions && request.imageDescriptions.length > 0) {
       prompt += `\n\nIMAGES CONTEXT:
-The content includes ${request.images.length} image(s). Please ensure any layout changes accommodate these images appropriately.`;
+The content includes ${request.imageDescriptions.length} image(s). Please ensure any layout changes accommodate these images appropriately.`;
     }
 
     return prompt;

@@ -56,18 +56,22 @@ export async function POST(request: NextRequest) {
     
     let cleanedText = ''
     let pageCount = 1
+    let imageDescriptions: Array<{id: string, description: string, page: number}> = []
     
     try {
       // Use Azure OpenAI Vision API service to extract content
       const result = await azureOpenAIService.analyzePdfWithVision(buffer, pdfFile.name)
       cleanedText = result.text
       pageCount = result.pageCount
+      imageDescriptions = result.imageDescriptions || []
       console.log('Successfully extracted content and image descriptions using Azure OpenAI Vision API service')
+      console.log(`Found ${imageDescriptions.length} image descriptions`)
     } catch (visionError) {
       console.error('Vision API extraction failed:', visionError)
       // Use fallback content generation
       cleanedText = generateFallbackContent(pdfFile.name, buffer.length)
       pageCount = 1
+      imageDescriptions = []
       console.log('Using fallback content due to Vision API failure')
     }
     
@@ -79,7 +83,7 @@ export async function POST(request: NextRequest) {
     
     // Limit content length for processing
     if (cleanedText.length > 10000) {
-      cleanedText = cleanedText.substring(0, 10000) + '\n\n[Content truncated for processing - full document analysis with image descriptions available]'
+      cleanedText = cleanedText.substring(0, 10000) + '\n\n[Content truncated for processing - full document analysis available]'
     }
     
     if (!cleanedText || cleanedText.length < 20) {
@@ -88,16 +92,18 @@ export async function POST(request: NextRequest) {
     
     console.log('Final processed text length:', cleanedText.length)
     console.log('Final text preview:', cleanedText.substring(0, 200))
+    console.log('Image descriptions:', imageDescriptions)
 
     return NextResponse.json({
       content: cleanedText,
-      images: [], // Image descriptions are now included in the content text
+      images: imageDescriptions, // Return the extracted image descriptions
       metadata: {
         pages: pageCount,
         size: buffer.length,
         filename: pdfFile.name,
-        extractionMethod: 'OpenAI Vision API with Image Descriptions',
-        features: ['text_extraction', 'image_descriptions', 'structure_preservation']
+        extractionMethod: 'OpenAI Vision API with Separate Image Descriptions',
+        features: ['text_extraction', 'image_descriptions', 'structure_preservation'],
+        imageCount: imageDescriptions.length
       }
     })
 

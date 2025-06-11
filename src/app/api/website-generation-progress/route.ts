@@ -3,11 +3,13 @@ import { azureOpenAIService } from '@/lib/azure-openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { content, websiteType, images, styling } = await request.json();
+    const { content, websiteType, images, styling, imageDescriptions } = await request.json();
 
     if (!content?.trim()) {
       return NextResponse.json({ error: 'No content provided' }, { status: 400 });
     }
+
+    console.log('Website Generation - WebsiteType:', websiteType, 'Images count:', images?.length || 0, 'Image descriptions count:', imageDescriptions?.length || 0);
 
     // Create a streaming response
     const encoder = new TextEncoder();
@@ -66,7 +68,7 @@ export async function POST(request: NextRequest) {
           const websiteRequest = {
             content,
             websiteType,
-            images: images || [],
+            imageDescriptions: imageDescriptions || [],
             styling: styling || {}
           };
 
@@ -77,6 +79,7 @@ export async function POST(request: NextRequest) {
             css: websiteResult.css,
             suggestions: websiteResult.suggestions || [
               'Content-specific design applied based on document analysis',
+              imageDescriptions?.length > 0 ? `${imageDescriptions.length} images integrated with provided URLs` : 'Consider adding images for better visual appeal',
               'Consider adding interactive elements for better engagement',
               'Optimize images for web performance',
               'Consider implementing smooth scrolling navigation'
