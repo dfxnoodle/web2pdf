@@ -16,7 +16,7 @@ export default function Home() {
       
       {/* Header */}
       <header className="relative z-10 pt-8 pb-4">
-        <div className="container mx-auto px-4 text-center">
+        <div className="w-full max-w-none text-center">
           {/* Mode Toggle */}
           <div className="flex justify-center mb-6">
             <div className="bg-white/20 backdrop-blur-md rounded-full p-1 border border-white/30 shadow-lg">
@@ -92,7 +92,7 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="relative z-10">
-        <div className="container mx-auto px-4 pb-16">
+        <div className="w-full max-w-none pb-16">
           {mode === 'web2pdf' ? (
             <WebToPDFConverter />
           ) : (
@@ -103,7 +103,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="relative z-10 text-center py-8">
-        <div className="container mx-auto px-4">
+        <div className="w-full max-w-none">
           <p className="text-white/70 text-sm">
             Powered by AI • Built with Next.js
           </p>

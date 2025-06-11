@@ -154,11 +154,11 @@ export default function ContentEditor({ initialContent = '', onContentChange }: 
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
+    <div className="w-full max-w-none mx-auto p-6 space-y-6">
       <div className="bg-white rounded-lg shadow-lg p-6">
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Web2PDF - AI-Powered Document Generator</h1>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Editor Section */}
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-4 items-start">

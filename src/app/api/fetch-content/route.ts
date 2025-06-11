@@ -152,8 +152,7 @@ export async function POST(request: NextRequest) {
         // Take screenshot
         const screenshot = await page.screenshot({ 
           type: 'png',
-          fullPage: false, // Capture viewport only for faster processing
-          quality: 80 
+          fullPage: false // Capture viewport only for faster processing
         });
         
         await browser.close();

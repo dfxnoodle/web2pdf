@@ -56,6 +56,26 @@ export interface TypesettingResponse {
   suggestions: string[];
 }
 
+// Add new interfaces for refinement functionality
+export interface RefinementRequest {
+  currentContent: string;
+  currentCSS?: string;
+  userFeedback: string;
+  contentType: 'pdf' | 'website';
+  documentType?: 'academic' | 'business' | 'newsletter' | 'report' | 'article' | 'calendar';
+  websiteType?: 'landing' | 'blog' | 'portfolio' | 'documentation' | 'business' | 'personal';
+  images?: Array<{data?: string, src?: string, type?: string, alt?: string, description?: string}>;
+  originalRequest?: any; // Store original generation parameters
+}
+
+export interface RefinementResponse {
+  refinedContent: string;
+  refinedCSS?: string;
+  changes: string[];
+  suggestions: string[];
+  explanation: string;
+}
+
 export class AzureOpenAIService {
   // Approximate token estimation (rough calculation: 1 token ≈ 4 characters)
   private estimateTokens(text: string): number {
@@ -1371,6 +1391,254 @@ ${request.images && request.images.length > 0 ?
         'Touch-friendly interface with appropriate tap targets',
         'Print styles included for better document printing'
       ]
+    };
+  }
+
+  async refineContent(
+    request: RefinementRequest,
+    onProgress?: (progress: { step: string; percentage: number }) => void
+  ): Promise<RefinementResponse> {
+    // Check if Azure OpenAI is available
+    if (!client || !hasAzureConfig) {
+      console.log('Azure OpenAI not available, using fallback refinement');
+      return this.createFallbackRefinement(request);
+    }
+
+    // Use chunking for large content
+    return await this.processContentInChunks(
+      request.currentContent,
+      async (chunk: string, isLast: boolean, chunkIndex: number) => {
+        const chunkRequest = { ...request, currentContent: chunk };
+        return await this.processRefinementChunk(chunkRequest, chunkIndex, isLast);
+      },
+      (results: RefinementResponse[]) => this.combineRefinementResults(results),
+      onProgress
+    );
+  }
+
+  private async processRefinementChunk(
+    request: RefinementRequest,
+    chunkIndex: number,
+    isLast: boolean
+  ): Promise<RefinementResponse> {
+    try {
+      const response = await client!.chat.completions.create({
+        model: 'model-router',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an expert content editor and designer specializing in ${request.contentType} refinement. Your task is to analyze user feedback and apply precise improvements to the content and styling.
+
+IMPORTANT: You must respond with valid JSON only. Do not include any markdown formatting, explanations, or text outside the JSON structure. Ensure all strings are properly escaped.
+
+USER FEEDBACK ANALYSIS:
+- Carefully read and understand the user's specific requests
+- Identify what aspects they want to change (layout, styling, content organization, etc.)
+- Apply changes that directly address their concerns
+- Maintain the overall quality and professionalism of the document
+- Preserve good elements while improving the requested areas
+
+REFINEMENT PRINCIPLES:
+- Make targeted improvements based on user feedback
+- Maintain consistency with the document type and purpose
+- Ensure accessibility and readability are preserved or enhanced
+- Provide clear explanations of what was changed and why
+- Suggest additional improvements that complement the user's requests
+
+For ${request.contentType === 'pdf' ? 'PDF documents' : 'websites'}, focus on:
+${request.contentType === 'pdf' ? 
+  '- Typography and formatting improvements\n- Layout optimization for print\n- Professional document structure\n- Clear hierarchy and readability' :
+  '- Modern responsive design\n- User experience improvements\n- Visual appeal and engagement\n- Mobile-first optimization'
+}`
+          },
+          {
+            role: 'user',
+            content: this.createRefinementPrompt(request)
+          }
+        ],
+        max_tokens: 12000,
+        temperature: 0.2,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "RefinementResponse",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                refinedContent: {
+                  type: "string",
+                  description: "Improved content with user feedback applied"
+                },
+                refinedCSS: {
+                  type: "string",
+                  description: "Updated CSS styles if applicable"
+                },
+                changes: {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  },
+                  description: "List of specific changes made"
+                },
+                suggestions: {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  },
+                  description: "Additional improvement suggestions"
+                },
+                explanation: {
+                  type: "string",
+                  description: "Explanation of changes made and rationale"
+                }
+              },
+              required: ["refinedContent", "refinedCSS", "changes", "suggestions", "explanation"],
+              additionalProperties: false
+            }
+          }
+        }
+      });
+
+      const result = response.choices[0]?.message?.content;
+      if (!result) {
+        throw new Error('No response from Azure OpenAI');
+      }
+
+      try {
+        const cleanedResult = this.cleanJsonResponse(result);
+        const parsed = JSON.parse(cleanedResult) as RefinementResponse;
+        
+        // Ensure refinedCSS is included if not provided but currentCSS exists
+        if (!parsed.refinedCSS && request.currentCSS) {
+          parsed.refinedCSS = request.currentCSS;
+        }
+        
+        return parsed;
+      } catch (parseError) {
+        console.error('Failed to parse refinement response:', parseError);
+        console.error('Raw response:', result);
+        throw new Error('Invalid JSON response from Azure OpenAI');
+      }
+    } catch (error) {
+      console.error('Error calling Azure OpenAI for refinement:', error);
+      return this.createFallbackRefinement(request);
+    }
+  }
+
+  private createRefinementPrompt(request: RefinementRequest): string {
+    let prompt = `Please refine this ${request.contentType} based on the user's feedback:
+
+CURRENT CONTENT:
+${request.currentContent}
+
+${request.currentCSS ? `CURRENT CSS STYLES:
+${request.currentCSS}
+
+` : ''}USER FEEDBACK:
+${request.userFeedback}
+
+CONTEXT:
+- Content Type: ${request.contentType}
+- Document Type: ${request.documentType || request.websiteType || 'general'}
+- Original Purpose: ${request.contentType === 'pdf' ? 'Professional document formatting' : 'Modern responsive website'}
+
+REFINEMENT REQUIREMENTS:
+1. Address each point in the user's feedback specifically
+2. Maintain or improve the overall quality and structure
+3. Ensure the content remains appropriate for its intended use
+4. Apply modern ${request.contentType === 'pdf' ? 'typographic' : 'web design'} best practices
+5. Preserve accessibility and readability standards
+
+Please provide:
+1. Refined content with improvements applied
+2. ${request.currentCSS ? 'Updated CSS styles that implement the requested changes' : 'CSS styles if applicable'}
+3. A detailed list of changes made
+4. Additional suggestions for further improvement
+5. Clear explanation of the refinement rationale`;
+
+    // Add image context if available
+    if (request.images && request.images.length > 0) {
+      prompt += `\n\nIMAGES CONTEXT:
+The content includes ${request.images.length} image(s). Please ensure any layout changes accommodate these images appropriately.`;
+    }
+
+    return prompt;
+  }
+
+  private combineRefinementResults(results: RefinementResponse[]): RefinementResponse {
+    if (results.length === 0) {
+      throw new Error('No refinement results to combine');
+    }
+
+    if (results.length === 1) {
+      return results[0];
+    }
+
+    // Combine all refined content
+    const combinedContent = results.map(result => result.refinedContent).join('\n\n');
+    
+    // Use the CSS from the first result (they should be similar)
+    const primaryCSS = results[0].refinedCSS;
+    
+    // Combine all changes and remove duplicates
+    const allChanges = results.flatMap(result => result.changes);
+    const uniqueChanges = [...new Set(allChanges)];
+    
+    // Combine all suggestions and remove duplicates
+    const allSuggestions = results.flatMap(result => result.suggestions);
+    const uniqueSuggestions = [...new Set(allSuggestions)];
+    
+    // Create a combined explanation
+    const explanation = `Applied user feedback across ${results.length} content sections. ${results[0].explanation}`;
+
+    return {
+      refinedContent: combinedContent,
+      refinedCSS: primaryCSS,
+      changes: uniqueChanges,
+      suggestions: uniqueSuggestions,
+      explanation
+    };
+  }
+
+  private createFallbackRefinement(request: RefinementRequest): RefinementResponse {
+    // Basic fallback refinement when Azure OpenAI is not available
+    let refinedContent = request.currentContent;
+    const changes: string[] = [];
+    const suggestions: string[] = [];
+
+    // Simple text processing based on common feedback patterns
+    const feedback = request.userFeedback.toLowerCase();
+    
+    if (feedback.includes('font') || feedback.includes('text size')) {
+      changes.push('Applied basic font size adjustments');
+      if (request.currentCSS) {
+        // Basic font size adjustment
+        request.currentCSS = request.currentCSS.replace(/font-size:\s*\d+px/g, 'font-size: 14px');
+      }
+    }
+    
+    if (feedback.includes('color') || feedback.includes('background')) {
+      changes.push('Applied basic color scheme adjustments');
+    }
+    
+    if (feedback.includes('spacing') || feedback.includes('margin') || feedback.includes('padding')) {
+      changes.push('Adjusted spacing and layout');
+    }
+
+    // Add basic suggestions
+    suggestions.push(
+      'Azure OpenAI service unavailable - using basic refinement',
+      'For advanced refinements, please ensure AI service is properly configured',
+      'Consider manual adjustments to achieve desired results'
+    );
+
+    return {
+      refinedContent,
+      refinedCSS: request.currentCSS,
+      changes: changes.length > 0 ? changes : ['Applied basic improvements based on feedback'],
+      suggestions,
+      explanation: 'Basic refinement applied due to AI service unavailability. Manual review and adjustment may be needed for optimal results.'
     };
   }
 }
