@@ -104,12 +104,14 @@ export async function POST(request: NextRequest) {
                 page-break-inside: avoid;
               }
               
+              /* Removed webpage-screenshot styles since screenshots are for AI reference only
               .webpage-screenshot img {
                 max-width: 90%;
                 margin: 1.5em auto;
                 border: 2px solid #333;
                 box-shadow: 0 4px 8px rgba(0,0,0,0.2);
               }
+              */
               
               .content-images {
                 margin: 1em 0;
@@ -122,11 +124,12 @@ export async function POST(request: NextRequest) {
                 display: inline-block;
               }
               
-              /* Handle data URLs (screenshots) */
+              /* Removed data URL styles since screenshots should not be in PDF content
               img[src^="data:"] {
                 max-width: 95% !important;
                 border: 2px solid #666;
               }
+              */
               
               /* Ensure images don't break across pages */
               figure, .image-container {

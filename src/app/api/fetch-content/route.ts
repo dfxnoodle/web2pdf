@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    // Capture webpage screenshot if requested
+    // Capture webpage screenshot if requested (for AI reference only, not included in final PDF)
     let screenshotUrl = '';
     if (captureScreenshot) {
       try {
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
         url: originalUrl.href,
         domain: originalUrl.hostname,
         images: images.slice(0, 10), // Limit to first 10 images
-        screenshot: screenshotUrl, // Include webpage screenshot
+        screenshot: screenshotUrl, // Include webpage screenshot for AI reference only
         wordCount: cleanContent.split(/\s+/).length,
         extractedAt: new Date().toISOString()
       }

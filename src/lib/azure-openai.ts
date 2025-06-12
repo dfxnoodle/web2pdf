@@ -412,7 +412,7 @@ For business documents, focus on:
     }
 
     if (request.screenshot) {
-      imageInstructions += '\n\nA webpage screenshot is available. Include it prominently as a visual representation of the source page.';
+      imageInstructions += '\n\nA webpage screenshot is available for reference to understand the page layout and styling context. DO NOT include this screenshot in the document output - it is for reference only.';
     }
 
     return `Improve the formatting of this ${request.documentType} content for ${request.outputFormat}:
@@ -503,7 +503,7 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
       }
       
       if (screenshot) {
-        imageContext += '\n\nA screenshot of the webpage is available. You can reference it as the main page visual. Include it at the beginning of the content as a representative image of the webpage.';
+        imageContext += '\n\nA screenshot of the webpage is available for reference to understand the page layout and design. DO NOT include this screenshot in the generated content - it should only be used for context and understanding.';
       }
 
       const response = await client!.chat.completions.create({
@@ -516,10 +516,11 @@ Focus on readability and professional appearance. Keep CSS concise and avoid com
 ${chunkIndex > 0 ? 'This is a continuation of a larger document. Maintain consistent heading hierarchy and structure.' : ''}
 
 When including images:
-- Use the exact image URLs provided
+- Use the exact image URLs provided for content images
 - Place images contextually where they make sense in the content
 - Include proper alt attributes for accessibility
 - Use responsive image styling
+- IMPORTANT: Never include webpage screenshots in the HTML output - they are for reference only
 
 IMPORTANT: You must respond with valid JSON only. Do not include any markdown formatting, explanations, or text outside the JSON structure. Ensure all strings are properly escaped.`
           },
@@ -1029,15 +1030,9 @@ Guidelines:
       }
     }).join('\n');
 
-    // Add screenshot at the beginning if available
+    // Add other images found in the content (but NOT the screenshot)
+    // Screenshots are for AI reference only and should not be included in the final document
     let imageContent = '';
-    if (screenshot) {
-      imageContent += `<div class="webpage-screenshot">
-        <img src="${screenshot}" alt="Screenshot of the webpage" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin-bottom: 1em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" />
-      </div>\n`;
-    }
-
-    // Add other images found in the content
     if (images && images.length > 0) {
       imageContent += '<div class="content-images" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin: 1.5rem 0;">\n';
       images.forEach(img => {

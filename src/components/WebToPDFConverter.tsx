@@ -794,7 +794,7 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
                           onChange={(e) => setIncludeScreenshot(e.target.checked)}
                           className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
                         />
-                        <span className="text-sm font-medium text-blue-800">📸 Include webpage screenshot</span>
+                        <span className="text-sm font-medium text-blue-800">📸 Include webpage screenshot (for AI reference)</span>
                       </label>
                     </div>
                     {includeScreenshot && (
@@ -807,7 +807,7 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
-                        <p className="text-xs text-gray-600 mt-2">Full webpage screenshot</p>
+                        <p className="text-xs text-gray-600 mt-2">Screenshot for AI context only - not included in final PDF</p>
                       </div>
                     )}
                   </div>
@@ -885,7 +885,7 @@ export default function WebToPDFConverter({ onPDFGenerated }: WebToPDFConverterP
                 <div className="mt-4 pt-4 border-t border-blue-200">
                   <div className="flex items-center justify-between text-sm text-blue-700">
                     <span>
-                      {(includeScreenshot ? 1 : 0) + selectedImages.length} image{(includeScreenshot ? 1 : 0) + selectedImages.length !== 1 ? 's' : ''} will be included in PDF
+                      {(includeScreenshot ? 1 : 0) + selectedImages.length} image{(includeScreenshot ? 1 : 0) + selectedImages.length !== 1 ? 's' : ''} will be included in PDF{includeScreenshot ? ' (screenshot for AI reference only)' : ''}
                     </span>
                     {((includeScreenshot && screenshot) || selectedImages.length > 0) && (
                       <span className="text-xs text-green-600 flex items-center gap-1">
